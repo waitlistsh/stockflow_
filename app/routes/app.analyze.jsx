@@ -8,7 +8,7 @@ import OpenAI from "openai";
 import {
   Page, Layout, Card, Text, BlockStack, Banner, Spinner, Box,
   InlineGrid, Divider, IndexTable, Badge, useIndexResourceState, Tooltip,
-  Filters, ChoiceList
+  Filters, ChoiceList, Select
 } from "@shopify/polaris";
 import { RefreshIcon, SettingsIcon, PinIcon } from "@shopify/polaris-icons"; 
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
@@ -89,7 +89,7 @@ export const loader = async ({ request }) => {
     },
     orderBy: [
       { isPinned: 'desc' }, // Pinned items appear first
-      { inventory: 'asc' }
+      { inventory: 'desc' } // CHANGED: High inventory (likely healthier) first by default
     ]
   });
 
@@ -109,7 +109,14 @@ export const loader = async ({ request }) => {
     // Velocity Calc
     const totalSold = item.sales.reduce((acc, s) => acc + s.quantitySold, 0);
     const velocity = totalSold / 30; 
-    const runway = velocity > 0 ? item.inventory / velocity : 999;
+    
+    // CHANGED: Handle OOS runway as -1 for sorting logic (High Health -> OOS)
+    let runway;
+    if (item.inventory <= 0) {
+      runway = -1;
+    } else {
+      runway = velocity > 0 ? item.inventory / velocity : 999;
+    }
 
     // --- PREDICTIVE ANALYTICS: Calculate Expected Stockout Date ---
     let forecastDate = "Indefinite";
@@ -202,7 +209,8 @@ export default function ProfessionalAnalysis() {
   // --- 1. STATE ---
   const [queryValue, setQueryValue] = useState("");
   const [selectedStatus, setSelectedStatus] = useState([]);
-  const [sortSelected, setSortSelected] = useState(["runway asc"]);
+  // CHANGED: Default sort to High Runway (Healthy) -> Low Runway (Critical) -> OOS
+  const [sortSelected, setSortSelected] = useState(["runway desc"]);
 
   // --- 2. HANDLERS ---
   const handleQueryValueChange = useCallback((value) => setQueryValue(value), []);
@@ -227,6 +235,16 @@ export default function ProfessionalAnalysis() {
       setSortSelected([`${key} ${direction}`]);
     }
   }, []);
+
+  const handleSortChange = useCallback((value) => setSortSelected([value]), []);
+
+  const sortOptions = [
+    {label: 'Health: High to Low', value: 'runway desc'},
+    {label: 'Health: Low to High', value: 'runway asc'},
+    {label: 'Inventory: High to Low', value: 'inventory desc'},
+    {label: 'Inventory: Low to High', value: 'inventory asc'},
+    {label: 'Velocity: High to Low', value: 'velocity desc'},
+  ];
 
   // --- 3. FILTERING (Must come FIRST) ---
   const filteredItems = items.filter((item) => {
@@ -474,15 +492,30 @@ export default function ProfessionalAnalysis() {
         <Layout>
           <Layout.Section>
             <Card padding="0">
-              {/* FILTERS COMPONENT */}
-              <Filters
-                queryValue={queryValue}
-                filters={filters}
-                appliedFilters={appliedFilters}
-                onQueryChange={handleQueryValueChange}
-                onQueryClear={handleQueryValueRemove}
-                onClearAll={handleFiltersClearAll}
-              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '16px' }}>
+                <div style={{ flex: 1 }}>
+                  {/* FILTERS COMPONENT */}
+                  <Filters
+                    queryValue={queryValue}
+                    filters={filters}
+                    appliedFilters={appliedFilters}
+                    onQueryChange={handleQueryValueChange}
+                    onQueryClear={handleQueryValueRemove}
+                    onClearAll={handleFiltersClearAll}
+                  />
+                </div>
+                
+                {/* SORTING DROPDOWN */}
+                <div style={{ width: '200px' }}>
+                   <Select
+                     label="Sort by"
+                     labelInline
+                     options={sortOptions}
+                     onChange={handleSortChange}
+                     value={sortSelected[0]}
+                   />
+                </div>
+              </div>
               
               <IndexTable
                 resourceName={resourceName}
