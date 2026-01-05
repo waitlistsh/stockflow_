@@ -3,26 +3,13 @@ import { useLoaderData, useNavigation, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import OpenAI from "openai";
-import {
-  Page,
-  Layout,
-  Card,
-  Text,
-  BlockStack,
-  Banner,
-  Spinner,
-  Box,
-  Button
-} from "@shopify/polaris";
+import { Page, Layout, Card, Text, BlockStack, Banner, Spinner, Box, Button } from "@shopify/polaris";
 
 const UPCOMING_EVENTS = [
   { name: "Valentine's Day", date: "Feb 14" },
   { name: "Mother's Day", date: "May 10" },
   { name: "Prime Day (Est)", date: "July 15" },
 ];
-
-
-
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
@@ -31,6 +18,11 @@ export const loader = async ({ request }) => {
   const productTitle = url.searchParams.get("product");
   const velocity = url.searchParams.get("velocity");
   const stock = url.searchParams.get("stock");
+
+  // SAFETY CHECK: Prevent Prisma from crashing if params are missing
+  if (!productTitle) {
+    return { error: "MISSING_PARAMS" };
+  }
 
   const settings = await prisma.merchantSettings.findUnique({
     where: { shop: session.shop }
@@ -41,18 +33,37 @@ export const loader = async ({ request }) => {
   }
 
   try {
+    const inventoryItem = await prisma.inventoryItem.findFirst({
+      where: { 
+        title: productTitle // This will no longer be null due to the check above
+      },
+      include: {
+        sales: {
+          orderBy: { date: 'desc' },
+          take: 14
+        }
+      }
+    });
+
+    const salesHistory = inventoryItem?.sales || [];
+    const salesTrendString = salesHistory
+      .map(s => `${new Date(s.date).toLocaleDateString()}: ${s.quantitySold} units`)
+      .join(", ");
+
     const openai = new OpenAI({ apiKey: settings.openaiKey });
     
+    // 3. Updated Detailed Trend Prompt
     const prompt = `
-                  Act as a Strategic Supply Chain Consultant.
-                  Product: "${productTitle}"
-                  Stats: Stock=${stock}, Velocity=${velocity}/day.
-                  Upcoming Events: ${JSON.stringify(UPCOMING_EVENTS)}
+      Act as a Strategic Supply Chain Consultant.
+      Product: "${productTitle}"
+      Current Stats: Stock=${stock}, Velocity=${velocity}/day.
+      Recent 14-Day Trend: [${salesTrendString || "No recent sales data"}]
+      Upcoming Events: ${JSON.stringify(UPCOMING_EVENTS)}
 
-                  1. Analysis: Compare the current date to upcoming events. Is a spike likely?
-                  2. Strategic Forecast: If a spike is coming, suggest a "Strategic Velocity" (e.g., increase by 20%).
-                  3. Action: Provide a specific "Manual Override" value the user should enter.
-                `;
+      1. Trend Analysis: Identify specific dates with anomalies (spikes/drops) in the recent trend.
+      2. Strategic Forecast: Based on the momentum and upcoming events, suggest a "Strategic Velocity" adjustment.
+      3. Action: Provide a specific "Manual Override" value the user should enter.
+    `;
 
     const completion = await openai.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
@@ -66,6 +77,7 @@ export const loader = async ({ request }) => {
     };
 
   } catch (err) {
+    console.error("AI Analysis Error:", err);
     return { error: err.message };
   }
 };
@@ -122,6 +134,18 @@ export default function Analyze() {
       </Page>
     );
   }
+      if (data?.error === "MISSING_PARAMS") {
+        return (
+          <Page title="Error">
+            <Banner tone="critical">
+              <p>No product information was provided for analysis. Please return to the dashboard and try again.</p>
+            </Banner>
+          </Page>
+        );
+      }
+
+
+
 
   if (data?.error) {
     return (

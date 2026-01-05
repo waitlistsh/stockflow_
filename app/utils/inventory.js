@@ -49,3 +49,63 @@ export const calculateInventoryHealth = (stock, velocity, override) => {
     };
   }
 };
+
+
+export async function syncProducts(admin) {
+  console.log("📦 Starting Product Sync...");
+  
+  const response = await admin.graphql(
+    `#graphql
+      query getProducts {
+        products(first: 50) {
+          nodes {
+            id
+            title
+            vendor       # NEW: Fetch Supplier
+            productType  # NEW: Fetch Category
+            variants(first: 10) {
+              nodes {
+                id, sku, price, inventoryQuantity
+              }
+            }
+          }
+        }
+      }
+    `
+  );
+
+  const data = await response.json();
+  const products = data.data.products.nodes;
+
+  for (const product of products) {
+    for (const variant of product.variants.nodes) {
+      const cleanVariantId = variant.id.split("/").pop(); 
+      const cleanProductId = product.id.split("/").pop();
+
+      await prisma.inventoryItem.upsert({
+        where: { variantId: cleanVariantId },
+        update: {
+          inventory: variant.inventoryQuantity,
+          price: parseFloat(variant.price),
+          // Update metadata in case it changed on Shopify
+          vendor: product.vendor,
+          category: product.productType,
+        },
+        create: {
+          shop: "current-shop", 
+          productId: cleanProductId,
+          variantId: cleanVariantId,
+          sku: variant.sku || "UNKNOWN",
+          title: `${product.title} - ${variant.sku || ''}`,
+          inventory: variant.inventoryQuantity,
+          price: parseFloat(variant.price),
+          // Store new fields
+          vendor: product.vendor,
+          category: product.productType,
+          reorderPoint: 5, // Default starting point
+        },
+      });
+    }
+  }
+  console.log(`✅ Synced ${products.length} products with Metadata.`);
+}

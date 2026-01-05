@@ -47,10 +47,11 @@ model InventoryItem {
   cost        Float    @default(0.0)
   price       Float    @default(0.0)
   leadTime    Int      @default(14) 
-  
+  vendor      String?  
+  category    String?  
+  reorderPoint Int     @default(5) 
   sales       DailySales[] 
   overrideVelocity Float?
-
 }
 
 model DailySales {

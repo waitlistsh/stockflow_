@@ -200,7 +200,25 @@ const rowMarkup = forecastData.map((item, index) => {
             {(tone === "critical" || tone === "attention") && (
               <Button 
                 variant="plain" 
-                onClick={() => navigate(`analyze${window.location.search}&product=${encodeURIComponent(name)}&velocity=${salesVelocity}&stock=${stockLevel}`)}
+                onClick={() => {
+                  // 1. Build the specific analysis parameters
+                  const analysisParams = new URLSearchParams({
+                    product: name,
+                    velocity: salesVelocity.toFixed(2),
+                    stock: stockLevel.toString()
+                  });
+
+                  // 2. Preserve existing Shopify session parameters (shop, host, etc.)
+                  const currentParams = new URLSearchParams(window.location.search);
+                  
+                  // 3. Merge them
+                  analysisParams.forEach((value, key) => {
+                    currentParams.set(key, value);
+                  });
+
+                  // 4. Navigate to the analyze route with the full query string
+                  navigate(`analyze?${currentParams.toString()}`);
+                }}
               >
                 🤖 Ask AI
               </Button>
