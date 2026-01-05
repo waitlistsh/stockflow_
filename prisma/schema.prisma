@@ -9,7 +9,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// --- SHOPIFY AUTH TABLE (FINAL FIX) ---
 model Session {
   id          String    @id
   shop        String
@@ -19,23 +18,17 @@ model Session {
   expires     DateTime?
   accessToken String
   userId      BigInt?
-  
-  // User details
-  firstName     String?
-  lastName      String?
-  email         String?
+  firstName   String?
+  lastName    String?
+  email       String?
   accountOwner  Boolean   @default(false)
   locale        String?
   collaborator  Boolean?  @default(false)
   emailVerified Boolean?  @default(false)
-
-  // THESE ARE THE MISSING FIELDS CAUSING THE ERROR
   refreshToken         String?
   refreshTokenExpires  DateTime?
 }
-// ------------------------------------------
 
-// --- OUR INVENTORY TABLES ---
 model InventoryItem {
   id          String   @id @default(uuid())
   shop        String   
@@ -47,11 +40,14 @@ model InventoryItem {
   cost        Float    @default(0.0)
   price       Float    @default(0.0)
   leadTime    Int      @default(14) 
-  vendor      String?  
+  vendor      String?
   category    String?  
   reorderPoint Int     @default(5) 
   sales       DailySales[] 
   overrideVelocity Float?
+
+  // --- NEW FIELD FOR PINNING ---
+  isPinned    Boolean  @default(false)
 }
 
 model DailySales {
@@ -68,7 +64,12 @@ model DailySales {
 
 model MerchantSettings {
   shop          String @id
-  openaiKey     String? 
+  openaiKey     String?
   safetyStock   Int     @default(7) 
   useAI         Boolean @default(false)
+
+  // --- NEW FIELDS FOR SETTINGS & SYNC ---
+  riskDaysCritical Int     @default(14)
+  riskDaysWarning  Int     @default(30)
+  lastSyncedAt     DateTime?
 }
