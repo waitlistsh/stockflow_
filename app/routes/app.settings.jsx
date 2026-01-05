@@ -1,5 +1,17 @@
 // app/routes/app.settings.jsx
+import { useState } from "react";
 import { Form, useLoaderData, useActionData, useNavigation } from "react-router";
+import { 
+  Page, 
+  Layout, 
+  Card, 
+  FormLayout, 
+  TextField, 
+  Button, 
+  BlockStack,
+  Text,
+  Banner 
+} from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
@@ -9,7 +21,6 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const openaiKey = formData.get("openaiKey");
 
-  // Save to database (Upsert = Create if new, Update if exists)
   await prisma.merchantSettings.upsert({
     where: { shop: session.shop },
     update: { openaiKey },
@@ -37,62 +48,55 @@ export default function Settings() {
   const { openaiKey } = useLoaderData();
   const actionData = useActionData();
   const navigation = useNavigation();
+  
+  // Polaris TextFields need local state to handle typing
+  const [key, setKey] = useState(openaiKey);
   const isSaving = navigation.state === "submitting";
 
   return (
-    <div style={{ padding: "40px", maxWidth: "600px" }}>
-      <h1>⚙️ AI Settings</h1>
-      <p>Enter your OpenAI API Key to unlock the "Consultant" features.</p>
-      
-      <div style={{ 
-        background: "white", 
-        padding: "20px", 
-        borderRadius: "8px", 
-        boxShadow: "0 2px 5px rgba(0,0,0,0.1)",
-        marginTop: "20px" 
-      }}>
-        <Form method="post">
-          <label style={{ display: "block", marginBottom: "10px", fontWeight: "bold" }}>
-            OpenAI API Key (starts with sk-...)
-          </label>
-          <input 
-            type="password" 
-            name="openaiKey" 
-            defaultValue={openaiKey}
-            placeholder="sk-..."
-            style={{ 
-              width: "100%", 
-              padding: "10px", 
-              marginBottom: "20px",
-              border: "1px solid #ccc",
-              borderRadius: "4px"
-            }} 
-          />
-          
-          <button 
-            type="submit" 
-            disabled={isSaving}
-            style={{ 
-              background: "#008060", 
-              color: "white", 
-              padding: "10px 20px", 
-              border: "none", 
-              borderRadius: "4px",
-              cursor: "pointer"
-            }}
-          >
-            {isSaving ? "Saving..." : "Save Settings"}
-          </button>
-        </Form>
-        
-        {actionData?.status === "saved" && (
-          <p style={{ color: "green", marginTop: "10px" }}>✅ API Key saved successfully!</p>
-        )}
-      </div>
+    <Page 
+      title="AI Settings" 
+      backAction={{ content: "Dashboard", url: "/app" }}
+    >
+      <Layout>
+        <Layout.AnnotatedSection
+          title="OpenAI Configuration"
+          description="Enter your API Key to enable the AI Consultant features."
+        >
+          <Card>
+            <BlockStack gap="400">
+              {actionData?.status === "saved" && (
+                <Banner title="Settings saved successfully" tone="success" />
+              )}
+              
+              <Text as="p" variant="bodyMd">
+                You can find your API key in your <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">OpenAI Dashboard</a>.
+              </Text>
 
-      <div style={{ marginTop: "20px" }}>
-        <a href="/app" style={{ color: "#008060", textDecoration: "none" }}>&larr; Back to Dashboard</a>
-      </div>
-    </div>
+              {/* We use the Remix Form, but with Polaris components inside */}
+              <Form method="post">
+                <FormLayout>
+                  <TextField
+                    label="API Key"
+                    type="password"
+                    name="openaiKey"
+                    value={key}
+                    onChange={(newValue) => setKey(newValue)}
+                    autoComplete="off"
+                    helpText="Starts with sk-..."
+                  />
+                  
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <Button submit variant="primary" loading={isSaving}>
+                      Save Settings
+                    </Button>
+                  </div>
+                </FormLayout>
+              </Form>
+            </BlockStack>
+          </Card>
+        </Layout.AnnotatedSection>
+      </Layout>
+    </Page>
   );
 }

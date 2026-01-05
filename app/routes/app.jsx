@@ -1,13 +1,11 @@
 // app/routes/app.jsx
 import { Link, Outlet, useLoaderData, useRouteError } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import { AppProvider } from "@shopify/shopify-app-react-router/react";
+import { AppProvider as ShopifyAppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
-
-import { AppProvider } from '@shopify/polaris';
+import { AppProvider as PolarisAppProvider } from '@shopify/polaris';
 import enTranslations from '@shopify/polaris/locales/en.json';
 import '@shopify/polaris/build/esm/styles.css';
-
 import { authenticate } from "../shopify.server";
 
 export const loader = async ({ request }) => {
@@ -18,24 +16,29 @@ export const loader = async ({ request }) => {
 export default function App() {
   const { apiKey } = useLoaderData();
 
-  // DEBUG: Check your terminal/browser console to see if this prints!
-  console.log("Translation File Loaded:", enTranslations); 
-
   return (
-    <AppProvider isEmbeddedApp apiKey={apiKey} i18n={enTranslations}>
-      <NavMenu>
-        <Link to="/app" rel="home">Home</Link>
-        <Link to="/app/settings">Settings</Link>
-      </NavMenu>
-      <Outlet />
-    </AppProvider>
+    <ShopifyAppProvider isEmbeddedApp apiKey={apiKey}>
+      <PolarisAppProvider i18n={enTranslations}>
+        <NavMenu>
+          <Link to="/app" rel="home">Home</Link>
+          <Link to="/app/settings">Settings</Link>
+        </NavMenu>
+        <Outlet />
+      </PolarisAppProvider>
+    </ShopifyAppProvider>
   );
 }
 
-// Error handling boundary
+// --- FIX STARTS HERE ---
 export function ErrorBoundary() {
-  return boundary.error(useRouteError());
+  return (
+    // We must wrap the error boundary in the Polaris Provider so it can render the error UI
+    <PolarisAppProvider i18n={enTranslations}>
+      {boundary.error(useRouteError())}
+    </PolarisAppProvider>
+  );
 }
+// --- FIX ENDS HERE ---
 
 export const headers = (headersArgs) => {
   return boundary.headers(headersArgs);
