@@ -19,10 +19,12 @@ export default function App() {
   return (
     <ShopifyAppProvider isEmbeddedApp apiKey={apiKey}>
       <PolarisAppProvider i18n={enTranslations}>
+        {/* FIX: Use NavMenu instead of the manual div links */}
         <NavMenu>
           <Link to="/app" rel="home">Home</Link>
           <Link to="/app/settings">Settings</Link>
         </NavMenu>
+
         <Outlet />
       </PolarisAppProvider>
     </ShopifyAppProvider>

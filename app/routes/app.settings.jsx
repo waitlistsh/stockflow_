@@ -1,6 +1,6 @@
 // app/routes/app.settings.jsx
 import { useState } from "react";
-import { Form, useLoaderData, useActionData, useNavigation } from "react-router";
+import { Form, useLoaderData, useActionData, useNavigation, Link } from "react-router";
 import { 
   Page, 
   Layout, 
@@ -14,6 +14,10 @@ import {
 } from "@shopify/polaris";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+
+<Link to="/app/settings">Settings</Link>
+
+
 
 // 1. SAVE THE KEY (Action)
 export const action = async ({ request }) => {
@@ -69,8 +73,11 @@ export default function Settings() {
                 <Banner title="Settings saved successfully" tone="success" />
               )}
               
-              <Text as="p" variant="bodyMd">
-                You can find your API key in your <a href="https://platform.openai.com/api-keys" target="_blank" rel="noreferrer">OpenAI Dashboard</a>.
+             <Text as="p" variant="bodyMd">
+                You can find your API key in your{" "}
+                <Link url="https://platform.openai.com/api-keys" external>
+                  OpenAI Dashboard
+                </Link>.
               </Text>
 
               {/* We use the Remix Form, but with Polaris components inside */}

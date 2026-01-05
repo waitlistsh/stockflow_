@@ -17,6 +17,8 @@ import {
 } from "@shopify/polaris";
 import { RefreshIcon, SettingsIcon } from "@shopify/polaris-icons";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { calculateInventoryHealth } from "../utils/inventory.js";
+
 
 // --- SERVER SIDE ---
 export const action = async ({ request }) => {
@@ -34,99 +36,138 @@ export const loader = async ({ request }) => {
 
   // 2. Prepare Table Data (Risk Analysis)
   const forecastData = items.map(item => {
-    const totalSold = item.sales.reduce((sum, day) => sum + day.quantitySold, 0);
-    const daysWithData = item.sales.length || 1; 
-    const velocity = totalSold / daysWithData; 
-    const daysRemaining = velocity > 0 ? Math.round(item.inventory / velocity) : 999;
+  const totalSold = item.sales.reduce((sum, day) => sum + day.quantitySold, 0);
+  const daysWithData = item.sales.length || 1;
+  
+  // A. Calculate Velocity
+  const velocity = totalSold / daysWithData;
 
-    return {
-      id: item.id,
-      title: item.title,
-      inventory: item.inventory,
-      velocity: velocity.toFixed(2),
-      daysRemaining: daysRemaining,
-      riskLevel: daysRemaining < 14 ? "HIGH" : daysRemaining < 30 ? "MEDIUM" : "LOW"
-    };
-  });
+  // B. USE YOUR IMPORT HERE (This fixes the grey text!)
+  const health = calculateInventoryHealth(item.inventory, velocity); // Note: using item.inventory
+  const rawRunway = velocity > 0 ? item.stockLevel / velocity : 9999;
+
+  return {
+  id: item.id,
+  
+  // 1. Map DB 'title' to Frontend 'name'
+  name: item.title, 
+  
+  // 2. Map DB 'inventory' to Frontend 'stockLevel'
+  stockLevel: item.inventory,
+  
+  // 3. Pass the calculated velocity
+  salesVelocity: velocity,
+  
+  // 4. Pass the full health object (CRITICAL for badges!)
+  health: health,
+  
+  // 5. Keep this for sorting
+  daysRemaining: velocity > 0 ? item.inventory / velocity : 9999
+};
+});
   
   forecastData.sort((a, b) => a.daysRemaining - b.daysRemaining);
 
-  // 3. Prepare Chart Data (Sales over Time)
-  // We need to group all sales from all products by date
-  const salesByDate = {};
-  
+  // 3. Prepare Chart Data (Last 14 Days with Zero-Filling)
+  const chartData = [];
+  const today = new Date();
+
+  // A. Generate the last 14 days (so the X-Axis is always full)
+  for (let i = 13; i >= 0; i--) {
+    const date = new Date(today);
+    date.setDate(today.getDate() - i);
+    
+    // Format as "Jan 05" to match your chart
+    const dateKey = date.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
+    
+    chartData.push({ date: dateKey, revenue: 0 });
+  }
+
+  // B. Fill in the actual revenue
   items.forEach(item => {
     item.sales.forEach(sale => {
-      // Format date as "Jan 05"
-      const dateKey = new Date(sale.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const saleDate = new Date(sale.date);
+      const dateKey = saleDate.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
       
-      if (!salesByDate[dateKey]) {
-        salesByDate[dateKey] = 0;
+      // Find the matching day in our empty chart
+      const dayEntry = chartData.find(d => d.date === dateKey);
+      
+      if (dayEntry) {
+        // Calculate revenue (Price * Quantity)
+        // Note: Make sure your DB has a price! If not, we default to 0 to prevent errors.
+        const revenue = sale.quantitySold * (item.price || 0); 
+        dayEntry.revenue += revenue;
       }
-      salesByDate[dateKey] += sale.revenue;
     });
   });
 
-  // Convert to array for Recharts
-  // Take only the last 14 days and sort them
-  const chartData = Object.entries(salesByDate)
-    .map(([name, value]) => ({ name, sales: value }))
-    .slice(-14); 
-
-
-  if (chartData.length === 0) {
-    console.log("⚠️ No real data found. Using dummy data for testing.");
-    chartData = [
-      { name: "Jan 01", sales: 150 },
-      { name: "Jan 02", sales: 200 },
-      { name: "Jan 03", sales: 50 },
-      { name: "Jan 04", sales: 300 },
-      { name: "Jan 05", sales: 120 },
-    ];
-  }  
-
-  return { forecastData, chartData };
+  return { items: forecastData, chartData };
 };
 
 // --- FRONTEND UI ---
 export default function Index() {
-  const { forecastData, chartData } = useLoaderData(); 
+  const { items: forecastData, chartData } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate();
   const isLoading = fetcher.state === "submitting";
 
   const resourceName = { singular: 'product', plural: 'products' };
   
-  const rowMarkup = forecastData.map(
-    ({ id, title, inventory, velocity, daysRemaining, riskLevel }, index) => (
-      <IndexTable.Row id={id} key={id} position={index}>
-        <IndexTable.Cell>
-          <Text variant="bodyMd" fontWeight="bold" as="span">{title}</Text>
-        </IndexTable.Cell>
-        <IndexTable.Cell>{inventory}</IndexTable.Cell>
-        <IndexTable.Cell>{velocity}/day</IndexTable.Cell>
-        <IndexTable.Cell>
-          <Text color={daysRemaining < 14 ? "critical" : "success"}>
-            {daysRemaining} Days
-          </Text>
-        </IndexTable.Cell>
-        <IndexTable.Cell>
-          <InlineStack align="start" gap="200">
-            <Badge tone={riskLevel === "HIGH" ? "critical" : riskLevel === "MEDIUM" ? "attention" : "success"}>
-              {riskLevel}
-            </Badge>
-            {(riskLevel === "HIGH" || riskLevel === "MEDIUM") && ( 
-               <Button 
-                 variant="plain" 
-                 onClick={() => navigate(`/app/analyze?product=${encodeURIComponent(title)}&velocity=${velocity}&stock=${inventory}`)}
-               >
-                 🤖 Ask AI
-               </Button>
-            )}
-          </InlineStack>
-        </IndexTable.Cell>
-      </IndexTable.Row>
-    ),
+ const rowMarkup = forecastData.map(
+    ({ id, name, stockLevel, salesVelocity, health }, index) => {
+      // 1. Map our Risk Labels to Shopify Polaris Tones
+      let tone = "success";
+      if (health.riskLabel === "OUT OF STOCK" || health.riskLabel === "HIGH") {
+        tone = "critical";
+      } else if (health.riskLabel === "MEDIUM") {
+        tone = "attention";
+      } else if (health.riskLabel === "STAGNANT") {
+        tone = "info";
+      }
+
+      return (
+        <IndexTable.Row id={id} key={id} position={index}>
+          <IndexTable.Cell>
+            <Text variant="bodyMd" fontWeight="bold" as="span">
+              {name}
+            </Text>
+          </IndexTable.Cell>
+          
+          <IndexTable.Cell>{stockLevel}</IndexTable.Cell>
+          
+          <IndexTable.Cell>{salesVelocity.toFixed(2)}/day</IndexTable.Cell>
+          
+          <IndexTable.Cell>
+            {/* Display the text calculated in the loader (e.g. "0 Days", "No Sales") */}
+            <Text tone={tone === "attention" ? "warning" : tone}>
+              {health.runwayText}
+            </Text>
+          </IndexTable.Cell>
+          
+          <IndexTable.Cell>
+            <InlineStack align="start" gap="200">
+              <Badge tone={tone}>{health.riskLabel}</Badge>
+              
+              {/* Show 'Ask AI' button if Risk is High, Medium, or Out of Stock */}
+              {(tone === "critical" || tone === "attention") && (
+                <Button
+                  variant="plain"
+                  onClick={() =>
+                    navigate(
+                      `/app/analyze?product=${encodeURIComponent(
+                        name
+                      )}&velocity=${salesVelocity}&stock=${stockLevel}`
+                    )
+                  }
+                >
+                  🤖 Ask AI
+                </Button>
+              )}
+            </InlineStack>
+          </IndexTable.Cell>
+        </IndexTable.Row>
+      );
+    }
   );
 
   return (
@@ -163,7 +204,7 @@ export default function Index() {
                     <ResponsiveContainer>
                       <BarChart data={chartData}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                        <XAxis dataKey="name" fontSize={12} tickLine={false} axisLine={false} />
+                        <XAxis dataKey="date" fontSize={12} tickLine={false} axisLine={false} />
                         <YAxis 
                           tickFormatter={(value) => `$${value}`} 
                           fontSize={12} 
@@ -174,7 +215,7 @@ export default function Index() {
                           cursor={{ fill: '#f4f6f8' }}
                           formatter={(value) => [`$${value.toFixed(2)}`, 'Revenue']}
                         />
-                        <Bar dataKey="sales" fill="#008060" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="revenue" fill="#008060" radius={[4, 4, 0, 0]} />
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
