@@ -12,37 +12,37 @@ export const loader = async ({ request }) => {
   await authenticate.admin(request);
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
+
 export default function App() {
   const { apiKey } = useLoaderData();
 
   return (
     <ShopifyAppProvider isEmbeddedApp apiKey={apiKey}>
+      {/* 1. PolarisAppProvider MUST wrap everything to provide i18n/context */}
       <PolarisAppProvider i18n={enTranslations}>
         
-        {/* 1. This handles the sidebar on the left */}
+        {/* 2. NavMenu handles the sidebar submenu in the Shopify Admin */}
         <NavMenu>
           <Link to="/app" rel="home">Home</Link>
-          <Link to="/app/settings">Settings</Link>
           <Link to="/app/analyze">Inventory Analysis</Link>
+          <Link to="/app/settings">Settings</Link>
         </NavMenu>
 
-        {/* 2. Remove the <div> with manual links that was here! */}
-
+        {/* 3. Outlet renders the content of your pages (Home, Settings, Analyze) */}
         <Outlet />
+        
       </PolarisAppProvider>
     </ShopifyAppProvider>
   );
 }
-// --- FIX STARTS HERE ---
+
 export function ErrorBoundary() {
   return (
-    // We must wrap the error boundary in the Polaris Provider so it can render the error UI
     <PolarisAppProvider i18n={enTranslations}>
       {boundary.error(useRouteError())}
     </PolarisAppProvider>
   );
 }
-// --- FIX ENDS HERE ---
 
 export const headers = (headersArgs) => {
   return boundary.headers(headersArgs);
