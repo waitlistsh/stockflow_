@@ -151,13 +151,12 @@ export default function Index() {
               {/* Show 'Ask AI' button if Risk is High, Medium, or Out of Stock */}
               {(tone === "critical" || tone === "attention") && (
                 <Button
-                  variant="plain"
-                  onClick={() =>
-                    navigate(
-                              `analyze?product=${encodeURIComponent(name)}&velocity=${salesVelocity}&stock=${stockLevel}`
-                            )
-                  }
-                >
+                      variant="plain"
+                      onClick={() =>
+                        // Using a relative path (no leading slash) keeps the shop/host params in the URL!
+                        navigate(`analyze${window.location.search}&product=${encodeURIComponent(name)}&velocity=${salesVelocity}&stock=${stockLevel}`)
+                      }
+                    >
                   🤖 Ask AI
                 </Button>
               )}
@@ -185,7 +184,8 @@ export default function Index() {
         {
           content: "Settings",
           icon: SettingsIcon,
-          onAction: () => navigate("/app/settings")
+          // Use the navigate function from react-router to keep it client-side
+          onAction: () => navigate("settings" + window.location.search)
         }
       ]}
     >

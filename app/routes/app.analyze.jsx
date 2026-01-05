@@ -1,8 +1,11 @@
-// app/routes/app.analyze.jsx
-import { useLoaderData, useNavigation } from "react-router";
+// 1. Add 'useNavigate' to your react-router imports
+import { useLoaderData, useNavigation, useNavigate } from "react-router"; 
+
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import OpenAI from "openai";
+
+// 2. Add 'Button' to your Polaris imports
 import {
   Page,
   Layout,
@@ -12,7 +15,8 @@ import {
   Banner,
   Link,
   Spinner,
-  Box
+  Box,
+  Button // <--- ADD THIS
 } from "@shopify/polaris";
 
 export const loader = async ({ request }) => {
@@ -69,6 +73,7 @@ export default function Analyze() {
   const data = useLoaderData();
   const navigation = useNavigation();
   
+  
   // This detects if the AI is currently "thinking"
   const isLoading = navigation.state === "loading";
 
@@ -84,21 +89,28 @@ export default function Analyze() {
   }
 
   if (data.error === "NO_KEY") {
-    return (
-      <Page title="AI Analysis" backAction={{ url: "/app" }}>
-        <Layout>
-          <Layout.Section>
-            <Banner title="OpenAI Key Missing" tone="warning">
-              <p>
-                You need to configure your API key before using this feature.
-                {' '}<Link url="/app/settings">Go to Settings</Link>
-              </p>
-            </Banner>
-          </Layout.Section>
-        </Layout>
-      </Page>
-    );
-  }
+  return (
+    <Page title="AI Analysis" backAction={{ url: "/app" }}>
+      <Layout>
+        <Layout.Section>
+          <Banner title="OpenAI Key Missing" tone="warning">
+            <p>
+              You need to configure your API key before using this feature.
+              {' '}
+              {/* FIX: Use a button or a relative navigate to keep the session alive */}
+              <Button 
+                variant="plain" 
+                onClick={() => navigate(`../settings${window.location.search}`)}
+              >
+                Go to Settings
+              </Button>
+            </p>
+          </Banner>
+        </Layout.Section>
+      </Layout>
+    </Page>
+  );
+}
 
   if (data.error) {
     return (

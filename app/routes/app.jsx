@@ -12,25 +12,27 @@ export const loader = async ({ request }) => {
   await authenticate.admin(request);
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
-
 export default function App() {
   const { apiKey } = useLoaderData();
 
   return (
     <ShopifyAppProvider isEmbeddedApp apiKey={apiKey}>
       <PolarisAppProvider i18n={enTranslations}>
-        {/* FIX: Use NavMenu instead of the manual div links */}
+        
+        {/* 1. This handles the sidebar on the left */}
         <NavMenu>
           <Link to="/app" rel="home">Home</Link>
           <Link to="/app/settings">Settings</Link>
+          <Link to="/app/analyze">Inventory Analysis</Link>
         </NavMenu>
+
+        {/* 2. Remove the <div> with manual links that was here! */}
 
         <Outlet />
       </PolarisAppProvider>
     </ShopifyAppProvider>
   );
 }
-
 // --- FIX STARTS HERE ---
 export function ErrorBoundary() {
   return (
