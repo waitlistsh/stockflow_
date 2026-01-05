@@ -16,6 +16,7 @@ import {
 } from "@shopify/polaris";
 
 export const loader = async ({ request }) => {
+  // This helper needs the shop and host params to stay in the URL
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
   
@@ -146,3 +147,4 @@ export default function Analyze() {
     </Page>
   );
 }
+

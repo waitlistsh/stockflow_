@@ -154,10 +154,8 @@ export default function Index() {
                   variant="plain"
                   onClick={() =>
                     navigate(
-                      `/app/analyze?product=${encodeURIComponent(
-                        name
-                      )}&velocity=${salesVelocity}&stock=${stockLevel}`
-                    )
+                              `analyze?product=${encodeURIComponent(name)}&velocity=${salesVelocity}&stock=${stockLevel}`
+                            )
                   }
                 >
                   🤖 Ask AI
