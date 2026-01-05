@@ -15,6 +15,15 @@ import {
   Button
 } from "@shopify/polaris";
 
+const UPCOMING_EVENTS = [
+  { name: "Valentine's Day", date: "Feb 14" },
+  { name: "Mother's Day", date: "May 10" },
+  { name: "Prime Day (Est)", date: "July 15" },
+];
+
+
+
+
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
@@ -35,15 +44,15 @@ export const loader = async ({ request }) => {
     const openai = new OpenAI({ apiKey: settings.openaiKey });
     
     const prompt = `
-  Act as a Strategic Supply Chain Consultant.
-  Product: "${productTitle}"
-  Stats: Stock=${stock}, Velocity=${velocity}/day.
-  Upcoming Events: ${JSON.stringify(UPCOMING_EVENTS)}
+                  Act as a Strategic Supply Chain Consultant.
+                  Product: "${productTitle}"
+                  Stats: Stock=${stock}, Velocity=${velocity}/day.
+                  Upcoming Events: ${JSON.stringify(UPCOMING_EVENTS)}
 
-  1. Analysis: Compare the current date to upcoming events. Is a spike likely?
-  2. Strategic Forecast: If a spike is coming, suggest a "Strategic Velocity" (e.g., increase by 20%).
-  3. Action: Provide a specific "Manual Override" value the user should enter.
-`;
+                  1. Analysis: Compare the current date to upcoming events. Is a spike likely?
+                  2. Strategic Forecast: If a spike is coming, suggest a "Strategic Velocity" (e.g., increase by 20%).
+                  3. Action: Provide a specific "Manual Override" value the user should enter.
+                `;
 
     const completion = await openai.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
@@ -68,11 +77,7 @@ export default function Analyze() {
   
   const isInitialLoading = navigation.state === "loading" && !data;
 
-const UPCOMING_EVENTS = [
-  { name: "Valentine's Day", date: "Feb 14" },
-  { name: "Mother's Day", date: "May 10" },
-  { name: "Prime Day (Est)", date: "July 15" },
-];
+
 
 
 

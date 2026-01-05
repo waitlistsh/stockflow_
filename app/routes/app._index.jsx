@@ -16,14 +16,33 @@ import {
   BlockStack,
   Banner,
   Box,
-  Spinner // Ensure Spinner is imported
+  Spinner,
+  TextField
 } from "@shopify/polaris";
 import { RefreshIcon, SettingsIcon, MagicIcon } from "@shopify/polaris-icons"; 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { calculateInventoryHealth } from "../utils/inventory.js";
 
+
+
+
+
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
+  const formData = await request.formData();
+  const intent = formData.get("intent");
+
+  // NEW: Handle Strategic Override Save
+  if (intent === "update_override") {
+    const id = formData.get("id");
+    const override = formData.get("override");
+    await prisma.inventoryItem.update({
+      where: { id },
+      data: { overrideVelocity: override ? parseFloat(override) : null }
+    });
+    return { status: "success" };
+  }
+
   await syncProducts(admin); 
   await syncOrders(admin);
   return { status: "success" };
@@ -32,26 +51,29 @@ export const action = async ({ request }) => {
 export const loader = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request); 
 
-  // 1. Fetch Items, Sales, and Merchant Settings
   const [items, settings] = await Promise.all([
     prisma.inventoryItem.findMany({ include: { sales: true } }),
     prisma.merchantSettings.findUnique({ where: { shop: session.shop } })
   ]);
 
-  // 2. Prepare Table Data (Risk Analysis)
   const forecastData = items.map(item => {
     const totalSold = item.sales.reduce((sum, day) => sum + day.quantitySold, 0);
     const daysWithData = item.sales.length || 1;
     const velocity = totalSold / daysWithData;
-    const health = calculateInventoryHealth(item.inventory, velocity);
+    
+    // NEW: Pass overrideVelocity to the utility
+    const health = calculateInventoryHealth(item.inventory, velocity, item.overrideVelocity);
 
     return {
       id: item.id,
       name: item.title, 
       stockLevel: item.inventory,
       salesVelocity: velocity,
+      overrideVelocity: item.overrideVelocity, // Pass this for the TextField
       health: health,
-      daysRemaining: velocity > 0 ? item.inventory / velocity : 9999
+      daysRemaining: (item.overrideVelocity || velocity) > 0 
+        ? item.inventory / (item.overrideVelocity || velocity) 
+        : 9999
     };
   });
   
