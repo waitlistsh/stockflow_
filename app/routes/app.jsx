@@ -1,14 +1,11 @@
 // app/routes/app.jsx
-import { Link, Outlet, useLoaderData, useRouteError, useLocation, useNavigate } from "react-router";
+import { Outlet, useLoaderData, useRouteError, useLocation, useNavigate } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider as ShopifyAppProvider } from "@shopify/shopify-app-react-router/react";
-import { NavMenu } from "@shopify/app-bridge-react";
-import { AppProvider as PolarisAppProvider, Frame, Navigation } from '@shopify/polaris';
-import { HomeIcon, ProductIcon, SettingsIcon } from '@shopify/polaris-icons';
+import { AppProvider as PolarisAppProvider } from '@shopify/polaris';
 import enTranslations from '@shopify/polaris/locales/en.json';
 import '@shopify/polaris/build/esm/styles.css';
 import { authenticate } from "../shopify.server";
-import { TitleBar } from "@shopify/app-bridge-react";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -19,24 +16,23 @@ export default function App() {
   const { apiKey } = useLoaderData();
   const location = useLocation();
   const navigate = useNavigate();
-  const { pathname, search } = useLocation();
 
   return (
     <ShopifyAppProvider isEmbeddedApp apiKey={apiKey}>
       <PolarisAppProvider 
         i18n={enTranslations} 
         linkComponent={({ children, url, ...rest }) => {
+          // This ensures that any <Link> or back button preserves the ?shop= session info
           return (
             <a
               href={url}
               onClick={(e) => {
                 e.preventDefault();
-                
-                // --- THE FIX IS HERE ---
-                // We take the current URL params (?shop=...) and stick them onto the next URL
-                const targetUrl = `${url}${location.search}`;
+                // Append current URL parameters (shop, host) to the target URL
+                const targetUrl = url.includes('?') 
+                  ? `${url}&${location.search.substring(1)}` 
+                  : `${url}${location.search}`;
                 navigate(targetUrl);
-                // -----------------------
               }}
               {...rest}
             >
@@ -45,49 +41,13 @@ export default function App() {
           );
         }}
       >
-        <NavMenu>
-          <Link to="/app" rel="home">Home</Link>
-          <Link to="/app/analyze">Inventory Analysis</Link>
-          <Link to="/app/settings">Settings</Link>
-        </NavMenu>
-
-        <Frame
-          navigation={
-            <Navigation location={location.pathname}>
-              <Navigation.Section
-                items={[
-                  {
-                    url: "/app",
-                    label: "Home",
-                    icon: HomeIcon,
-                    selected: location.pathname === "/app",
-                  },
-                  {
-                    url: "/app/analyze",
-                    label: "Inventory Analysis",
-                    icon: ProductIcon, 
-                    selected: location.pathname.startsWith("/app/analyze"),
-                  },
-                  {
-                    url: "/app/settings",
-                    label: "Settings",
-                    icon: SettingsIcon,
-                    selected: location.pathname.startsWith("/app/settings"),
-                  }
-                ]}
-              />
-            </Navigation>
-          }
-        >
-          <Outlet />
-        </Frame>
-
+        {/* Frame and Navigation removed to get rid of the left sidebar menu */}
+        <Outlet />
       </PolarisAppProvider>
     </ShopifyAppProvider>
   );
 }
 
-// Keep the standard ErrorBoundary and headers
 export function ErrorBoundary() {
   return (
     <PolarisAppProvider i18n={enTranslations}>

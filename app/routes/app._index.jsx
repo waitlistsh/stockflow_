@@ -131,7 +131,10 @@ export default function Index() {
     );
   }
 
-  const rowMarkup = forecastData.map(({ id, name, stockLevel, salesVelocity, health }, index) => {
+
+const rowMarkup = forecastData.map((item, index) => { 
+    const { id, name, stockLevel, salesVelocity, health, overrideVelocity } = item;
+    
     let tone = health.riskLabel === "OUT OF STOCK" || health.riskLabel === "HIGH" ? "critical" : 
                health.riskLabel === "MEDIUM" ? "attention" : "success";
 
@@ -140,12 +143,43 @@ export default function Index() {
         <IndexTable.Cell><Text variant="bodyMd" fontWeight="bold" as="span">{name}</Text></IndexTable.Cell>
         <IndexTable.Cell>{stockLevel}</IndexTable.Cell>
         <IndexTable.Cell>{salesVelocity.toFixed(2)}/day</IndexTable.Cell>
-        <IndexTable.Cell><Text tone={tone === "attention" ? "warning" : tone}>{health.runwayText}</Text></IndexTable.Cell>
+        
+        {/* STRATEGIC FORECASTING: Manual Override Input */}
+        <IndexTable.Cell>
+          <div style={{ width: '100px' }}>
+            <TextField
+              label="Override Velocity"
+              labelHidden
+              type="number"
+              placeholder={salesVelocity.toFixed(2)}
+              value={overrideVelocity} 
+              suffix="/day"
+              autoComplete="off"
+              onChange={(val) => {
+               
+                fetcher.submit(
+                  { id: id, override: val, intent: "update_override" },
+                  { method: "POST" }
+                );
+              }}
+            />
+          </div>
+        </IndexTable.Cell>
+
+        <IndexTable.Cell>
+          <Text tone={tone === "attention" ? "warning" : tone}>
+            {health.runwayText}
+          </Text>
+        </IndexTable.Cell>
+        
         <IndexTable.Cell>
           <InlineStack align="start" gap="200">
             <Badge tone={tone}>{health.riskLabel}</Badge>
             {(tone === "critical" || tone === "attention") && (
-              <Button variant="plain" onClick={() => navigate(`analyze${window.location.search}&product=${encodeURIComponent(name)}&velocity=${salesVelocity}&stock=${stockLevel}`)}>
+              <Button 
+                variant="plain" 
+                onClick={() => navigate(`analyze${window.location.search}&product=${encodeURIComponent(name)}&velocity=${salesVelocity}&stock=${stockLevel}`)}
+              >
                 🤖 Ask AI
               </Button>
             )}
@@ -153,7 +187,7 @@ export default function Index() {
         </IndexTable.Cell>
       </IndexTable.Row>
     );
-  });
+});
 
   return (
   <Page

@@ -49,6 +49,8 @@ model InventoryItem {
   leadTime    Int      @default(14) 
   
   sales       DailySales[] 
+  overrideVelocity Float?
+
 }
 
 model DailySales {

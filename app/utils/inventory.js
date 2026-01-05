@@ -1,11 +1,13 @@
 /**
- * Calculates inventory health.
+ * Calculates inventory health with support for Strategic Overrides.
  * @param {number} stock - The current stock level
- * @param {number} velocity - Sales per day
+ * @param {number} velocity - Statistical sales per day (moving average)
+ * @param {number|null} override - Manual override velocity (strategic input)
  */
+export const calculateInventoryHealth = (stock, velocity, override) => {
+  // Use the override velocity if it exists; otherwise, use the statistical average
+  const effectiveVelocity = (override !== null && override !== undefined) ? Number(override) : velocity;
 
-
-export const calculateInventoryHealth = (stock, velocity) => {
   // 1. OUT OF STOCK CHECK
   if (stock <= 0) {
     return {
@@ -15,17 +17,17 @@ export const calculateInventoryHealth = (stock, velocity) => {
     };
   }
 
-  // 2. STAGNANT CHECK (Stock exists, but no sales)
-  if (velocity <= 0) {
+  // 2. STAGNANT CHECK (Stock exists, but no sales after override)
+  if (effectiveVelocity <= 0) {
     return {
       runwayText: 'No Sales',
       riskLabel: 'STAGNANT',
       riskColor: 'bg-gray-100 text-gray-800 border-gray-200',
     };
   }
-
-  // 3. STANDARD CALCULATION
-  const runwayDays = stock / velocity;
+  
+  // 3. STANDARD CALCULATION BASED ON EFFECTIVE VELOCITY
+  const runwayDays = stock / effectiveVelocity;
 
   if (runwayDays <= 14) {
     return {

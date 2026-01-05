@@ -35,17 +35,15 @@ export const loader = async ({ request }) => {
     const openai = new OpenAI({ apiKey: settings.openaiKey });
     
     const prompt = `
-      Act as an Inventory Expert for a Shopify Store. 
-      Product: "${productTitle}"
-      Current Stock: ${stock} units
-      Sales Rate: ${velocity} units/day.
-      
-      Provide advice in exactly this format:
-      Summary: [One sentence summary]
-      Action 1: [Actionable step]
-      Action 2: [Actionable step]
-      Action 3: [Actionable step]
-    `;
+  Act as a Strategic Supply Chain Consultant.
+  Product: "${productTitle}"
+  Stats: Stock=${stock}, Velocity=${velocity}/day.
+  Upcoming Events: ${JSON.stringify(UPCOMING_EVENTS)}
+
+  1. Analysis: Compare the current date to upcoming events. Is a spike likely?
+  2. Strategic Forecast: If a spike is coming, suggest a "Strategic Velocity" (e.g., increase by 20%).
+  3. Action: Provide a specific "Manual Override" value the user should enter.
+`;
 
     const completion = await openai.chat.completions.create({
       messages: [{ role: "user", content: prompt }],
@@ -70,6 +68,17 @@ export default function Analyze() {
   
   const isInitialLoading = navigation.state === "loading" && !data;
 
+const UPCOMING_EVENTS = [
+  { name: "Valentine's Day", date: "Feb 14" },
+  { name: "Mother's Day", date: "May 10" },
+  { name: "Prime Day (Est)", date: "July 15" },
+];
+
+
+
+
+
+
   if (isInitialLoading) {
     return (
       <Page>
@@ -84,7 +93,11 @@ export default function Analyze() {
   // data is now properly defined from useLoaderData() above
   if (data?.error === "NO_KEY") {
     return (
-      <Page title="AI Analysis" backAction={{ url: "/app" }}>
+      <Page title="AI Analysis" backAction={{ 
+                      content: "Dashboard", 
+                      // Manual fallback for buttons that don't use the layout's linkComponent
+                      url: `/app${window.location.search}` 
+                    }}>
         <Layout>
           <Layout.Section>
             <Banner title="OpenAI Key Missing" tone="warning">
@@ -107,7 +120,11 @@ export default function Analyze() {
 
   if (data?.error) {
     return (
-      <Page title="AI Analysis" backAction={{ url: "/app" }}>
+      <Page title="AI Analysis" backAction={{ 
+                      content: "Dashboard", 
+                      // Manual fallback for buttons that don't use the layout's linkComponent
+                      url: `/app${window.location.search}` 
+                    }}>
         <Banner title="Error generating report" tone="critical">
           <p>{data.error}</p>
         </Banner>
@@ -120,7 +137,11 @@ export default function Analyze() {
   return (
     <Page 
       title={`Analysis: ${data.productTitle}`} 
-      backAction={{ content: "Dashboard", url: "/app" }}
+      backAction={{ 
+                      content: "Dashboard", 
+                      // Manual fallback for buttons that don't use the layout's linkComponent
+                      url: `/app${window.location.search}` 
+                    }}
     >
       <Layout>
         <Layout.Section>
