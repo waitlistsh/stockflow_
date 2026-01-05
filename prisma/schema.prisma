@@ -1,0 +1,71 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+// --- SHOPIFY AUTH TABLE (FINAL FIX) ---
+model Session {
+  id          String    @id
+  shop        String
+  state       String
+  isOnline    Boolean   @default(false)
+  scope       String?
+  expires     DateTime?
+  accessToken String
+  userId      BigInt?
+  
+  // User details
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+
+  // THESE ARE THE MISSING FIELDS CAUSING THE ERROR
+  refreshToken         String?
+  refreshTokenExpires  DateTime?
+}
+// ------------------------------------------
+
+// --- OUR INVENTORY TABLES ---
+model InventoryItem {
+  id          String   @id @default(uuid())
+  shop        String   
+  productId   String   
+  variantId   String   @unique 
+  sku         String?
+  title       String
+  inventory   Int      @default(0) 
+  cost        Float    @default(0.0)
+  price       Float    @default(0.0)
+  leadTime    Int      @default(14) 
+  
+  sales       DailySales[] 
+}
+
+model DailySales {
+  id            String        @id @default(uuid())
+  date          DateTime
+  quantitySold  Int
+  revenue       Float
+  
+  inventoryItem InventoryItem @relation(fields: [variantId], references: [variantId])
+  variantId     String
+  
+  @@index([variantId, date]) 
+}
+
+model MerchantSettings {
+  shop          String @id
+  openaiKey     String? 
+  safetyStock   Int     @default(7) 
+  useAI         Boolean @default(false)
+}
