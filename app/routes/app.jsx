@@ -21,9 +21,9 @@ export default function App() {
       <PolarisAppProvider i18n={enTranslations}>
       
         <NavMenu>
-          <Link to="/app" rel="home">Home</Link>
-          <Link to="/app/analyze">Inventory Analysis</Link>
-          <Link to="/app/settings">Settings</Link>
+          <a href="/app" rel="home">Home</a>
+          <a href="/app/analyze">Inventory Analysis</a>
+          <a href="/app/settings">Settings</a>
         </NavMenu>
 
         <Outlet />

@@ -2,7 +2,7 @@
 
 client_id = "0dfdf8be819964ce1953f58becf7397a"
 name = "Stockflow"
-application_url = "https://example.com"
+application_url = "https://stockflow-ziaq.onrender.com"
 embedded = true
 
 [build]
@@ -29,3 +29,10 @@ scopes = "read_orders,write_products"
 
 [auth]
 redirect_urls = [ "https://example.com/api/auth" ]
+
+[auth]
+redirect_urls = [
+  "https://stockflow-ziaq.onrender.com/auth/callback",
+  "https://stockflow-ziaq.onrender.com/auth/shopify/callback",
+  "https://stockflow-ziaq.onrender.com/api/auth/callback"
+]
