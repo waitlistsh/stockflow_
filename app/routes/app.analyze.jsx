@@ -1,204 +1,304 @@
 // app/routes/app.analyze.jsx
-import { useLoaderData, useNavigation, useNavigate } from "react-router";
+import { useLoaderData, useNavigation, useFetcher, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { syncProducts, syncOrders } from "../services/inventory.server"; 
 import OpenAI from "openai";
-import { Page, Layout, Card, Text, BlockStack, Banner, Spinner, Box, Button } from "@shopify/polaris";
+import {
+  Page, Layout, Card, Text, BlockStack, Banner, Spinner, Box,
+  InlineGrid, Divider, IndexTable, Badge, useIndexResourceState
+} from "@shopify/polaris";
+import { RefreshIcon, SettingsIcon } from "@shopify/polaris-icons"; 
+import { LineChart, Line, ResponsiveContainer } from 'recharts';
 
-const UPCOMING_EVENTS = [
-  { name: "Valentine's Day", date: "Feb 14" },
-  { name: "Mother's Day", date: "May 10" },
-  { name: "Prime Day (Est)", date: "July 15" },
-];
+// --- HELPER: Generate Sparkline Data (Last 30 Days) ---
+const getSparklineData = (salesHistory) => {
+  const data = [];
+  const today = new Date();
+  for (let i = 29; i >= 0; i--) {
+    const date = new Date(today);
+    date.setDate(today.getDate() - i);
+    date.setHours(0, 0, 0, 0);
+    
+    // Find sale for this specific day
+    const sale = salesHistory.find(s => {
+      const sDate = new Date(s.date);
+      return sDate.toDateString() === date.toDateString();
+    });
+
+    data.push({ i, val: sale ? sale.quantitySold : 0 });
+  }
+  return data;
+};
+
+// --- ACTION: Handle "Sync & Refresh" Trigger ---
+export const action = async ({ request }) => {
+  const { admin } = await authenticate.admin(request);
+  
+  // Run the sync logic
+  await syncProducts(admin);
+  await syncOrders(admin);
+  
+  return { status: "success" };
+};
 
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
-  const url = new URL(request.url);
-  
-  const productTitle = url.searchParams.get("product");
-  const velocity = url.searchParams.get("velocity");
-  const stock = url.searchParams.get("stock");
-
-  // SAFETY CHECK: Prevent Prisma from crashing if params are missing
-  if (!productTitle) {
-    return { error: "MISSING_PARAMS" };
-  }
 
   const settings = await prisma.merchantSettings.findUnique({
     where: { shop: session.shop }
   });
 
-  if (!settings?.openaiKey) {
-    return { error: "NO_KEY" };
-  }
-
-  try {
-    const inventoryItem = await prisma.inventoryItem.findFirst({
-      where: { 
-        title: productTitle // This will no longer be null due to the check above
-      },
-      include: {
-        sales: {
-          orderBy: { date: 'desc' },
-          take: 14
-        }
+  // 1. Fetch ALL Inventory with Sales History
+  const items = await prisma.inventoryItem.findMany({
+    include: {
+      sales: {
+        where: { date: { gte: new Date(new Date().setDate(new Date().getDate() - 30)) } } 
       }
-    });
+    }
+  });
 
-    const salesHistory = inventoryItem?.sales || [];
-    const salesTrendString = salesHistory
-      .map(s => `${new Date(s.date).toLocaleDateString()}: ${s.quantitySold} units`)
-      .join(", ");
+  // 2. Calculate Aggregate KPIs
+  let totalStockValue = 0;
+  let totalItems = items.length;
+  let outOfStockCount = 0;
+  let potentialRevenue = 0;
+  let highRiskCount = 0;
 
-    const openai = new OpenAI({ apiKey: settings.openaiKey });
+  const enrichedItems = items.map(item => {
+    // KPI Calc
+    totalStockValue += (item.inventory * item.cost);
+    potentialRevenue += (item.inventory * item.price);
+    if (item.inventory <= 0) outOfStockCount++;
     
-    // 3. Updated Detailed Trend Prompt
-    const prompt = `
-      Act as a Strategic Supply Chain Consultant.
-      Product: "${productTitle}"
-      Current Stats: Stock=${stock}, Velocity=${velocity}/day.
-      Recent 14-Day Trend: [${salesTrendString || "No recent sales data"}]
-      Upcoming Events: ${JSON.stringify(UPCOMING_EVENTS)}
+    // Velocity Calc
+    const totalSold = item.sales.reduce((acc, s) => acc + s.quantitySold, 0);
+    const velocity = totalSold / 30; // Simple 30-day average
+    const runway = velocity > 0 ? item.inventory / velocity : 999;
 
-      1. Trend Analysis: Identify specific dates with anomalies (spikes/drops) in the recent trend.
-      2. Strategic Forecast: Based on the momentum and upcoming events, suggest a "Strategic Velocity" adjustment.
-      3. Action: Provide a specific "Manual Override" value the user should enter.
-    `;
+    if (runway < 14 && item.inventory > 0) highRiskCount++;
 
-    const completion = await openai.chat.completions.create({
-      messages: [{ role: "user", content: prompt }],
-      model: "gpt-3.5-turbo",
-    });
-
-    return { 
-      rawAdvice: completion.choices[0].message.content,
-      productTitle,
-      stats: { stock, velocity }
+    return {
+      ...item,
+      velocity,
+      runway,
+      sparkline: getSparklineData(item.sales)
     };
+  });
 
-  } catch (err) {
-    console.error("AI Analysis Error:", err);
-    return { error: err.message };
+  // 3. AI Executive Report (Aggregate)
+  let aiReport = "AI Analysis Unavailable - Check API Key";
+  
+  if (settings?.openaiKey) {
+    try {
+      const openai = new OpenAI({ apiKey: settings.openaiKey });
+      
+      const prompt = `
+        Act as a Senior Inventory Manager. Analyze this store's status:
+        - Total SKUs: ${totalItems}
+        - Stockouts: ${outOfStockCount}
+        - High Risk (Low Stock): ${highRiskCount}
+        - Total Inventory Cost: $${totalStockValue.toFixed(2)}
+        - Potential Revenue: $${potentialRevenue.toFixed(2)}
+        
+        Provide a "Professional Management Summary" (max 3 sentences) focusing on capital efficiency and immediate risks. 
+        Do not use markdown.
+      `;
+
+      const completion = await openai.chat.completions.create({
+        messages: [{ role: "user", content: prompt }],
+        model: "gpt-3.5-turbo",
+      });
+      
+      aiReport = completion.choices[0].message.content;
+    } catch (err) {
+      console.error(err);
+      aiReport = "Error generating AI report.";
+    }
   }
+
+  // Sort by Risk (Lowest Runway First)
+  enrichedItems.sort((a, b) => a.runway - b.runway);
+
+  return { 
+    stats: { totalItems, outOfStockCount, totalStockValue, highRiskCount },
+    items: enrichedItems,
+    aiReport,
+    hasKey: !!settings?.openaiKey
+  };
 };
 
-export default function Analyze() {
-  const data = useLoaderData();
+export default function ProfessionalAnalysis() {
+  const { stats, items, aiReport, hasKey } = useLoaderData();
   const navigation = useNavigation();
-  const navigate = useNavigate(); // ADD THIS LINE TO FIX THE NAVIGATION ERROR
+  const fetcher = useFetcher();
+  const navigate = useNavigate(); // Hook for navigation
   
-  const isInitialLoading = navigation.state === "loading" && !data;
+  const isSyncing = fetcher.state === "submitting";
+  const isLoading = navigation.state === "loading" && !isSyncing;
 
+  // Table Resource Setup
+  const resourceName = { singular: 'product', plural: 'products' };
+  const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(items);
 
-
-
-
-
-
-
-  if (isInitialLoading) {
+  if (!hasKey) {
     return (
-      <Page>
-        <div style={{display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '50vh', alignItems: 'center', gap: '20px'}}>
-          <Spinner accessibilityLabel="Consulting AI" size="large" />
-          <Text variant="headingMd" as="h2">Consulting AI Inventory Expert...</Text>
-        </div>
-      </Page>
-    );
-  }
-
-  // data is now properly defined from useLoaderData() above
-  if (data?.error === "NO_KEY") {
-    return (
-      <Page title="AI Analysis" backAction={{ 
-                      content: "Dashboard", 
-                      // Manual fallback for buttons that don't use the layout's linkComponent
-                      url: `/app${window.location.search}` 
-                    }}>
-        <Layout>
-          <Layout.Section>
-            <Banner title="OpenAI Key Missing" tone="warning">
-              <p>
-                You need to configure your API key before using this feature.
-                {' '}
-                <Button 
-                  variant="plain" 
-                  onClick={() => navigate(`../settings${window.location.search}`)}
-                >
-                  Go to Settings
-                </Button>
-              </p>
-            </Banner>
-          </Layout.Section>
-        </Layout>
-      </Page>
-    );
-  }
-      if (data?.error === "MISSING_PARAMS") {
-        return (
-          <Page title="Error">
-            <Banner tone="critical">
-              <p>No product information was provided for analysis. Please return to the dashboard and try again.</p>
-            </Banner>
-          </Page>
-        );
-      }
-
-
-
-
-  if (data?.error) {
-    return (
-      <Page title="AI Analysis" backAction={{ 
-                      content: "Dashboard", 
-                      // Manual fallback for buttons that don't use the layout's linkComponent
-                      url: `/app${window.location.search}` 
-                    }}>
-        <Banner title="Error generating report" tone="critical">
-          <p>{data.error}</p>
+      <Page title="Inventory Report">
+        <Banner tone="warning" title="Setup Required">
+          Please add your OpenAI API Key in Settings to generate the Executive Report.
         </Banner>
       </Page>
     );
   }
 
-  const lines = data.rawAdvice ? data.rawAdvice.split('\n').filter(line => line.trim() !== '') : [];
+  if (isLoading) {
+    return (
+      <Page fullWidth>
+        <div style={{height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+           <Spinner size="large" accessibilityLabel="Generating Report" />
+        </div>
+      </Page>
+    );
+  }
+
+  // Row Markup
+  const rowMarkup = items.map((item, index) => (
+    <IndexTable.Row id={item.id} key={item.id} position={index} selected={selectedResources.includes(item.id)}>
+      <IndexTable.Cell>
+        <Text variant="bodyMd" fontWeight="bold">{item.title}</Text>
+        <Text variant="bodySm" tone="subdued">SKU: {item.sku || 'N/A'}</Text>
+      </IndexTable.Cell>
+      
+      <IndexTable.Cell>{item.inventory}</IndexTable.Cell>
+      
+      {/* SPARKLINE CELL */}
+      <IndexTable.Cell>
+        <div style={{ width: '100px', height: '30px' }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={item.sparkline}>
+              <Line 
+                type="monotone" 
+                dataKey="val" 
+                stroke="#008060" 
+                strokeWidth={2} 
+                dot={false} 
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </IndexTable.Cell>
+
+      <IndexTable.Cell>
+        <Text variant="bodyMd">{item.velocity.toFixed(1)} /day</Text>
+      </IndexTable.Cell>
+
+      <IndexTable.Cell>
+         {item.runway < 14 ? (
+           <Badge tone="critical">{Math.floor(item.runway)} Days Left</Badge>
+         ) : item.runway > 90 ? (
+           <Badge tone="success">Healthy</Badge>
+         ) : (
+           <Badge tone="attention">{Math.floor(item.runway)} Days Left</Badge>
+         )}
+      </IndexTable.Cell>
+    </IndexTable.Row>
+  ));
 
   return (
     <Page 
-      title={`Analysis: ${data.productTitle}`} 
+      title="Strategic Inventory Report" 
+      fullWidth
       backAction={{ 
-                      content: "Dashboard", 
-                      // Manual fallback for buttons that don't use the layout's linkComponent
-                      url: `/app${window.location.search}` 
-                    }}
+        content: "Dashboard", 
+        onAction: () => navigate("/app" + window.location.search) 
+      }}
+      primaryAction={{
+        content: 'Sync Data',
+        icon: RefreshIcon,
+        onAction: () => fetcher.submit({}, { method: "POST" }),
+        loading: isSyncing,
+      }}
+      secondaryActions={[
+        {
+          content: "Dashboard",
+          onAction: () => navigate("/app" + window.location.search),
+        },
+        {
+          content: "Settings",
+          icon: SettingsIcon,
+          onAction: () => navigate("/app/settings" + window.location.search),
+        },
+      ]}
     >
-      <Layout>
-        <Layout.Section>
-          <Card>
-            <BlockStack gap="400">
-              <Text variant="headingLg" as="h2">Consultant Report</Text>
-              
-              <Box background="bg-surface-secondary" padding="300" borderRadius="200">
-                <Text variant="bodyMd" as="p">
-                  <strong>Context:</strong> You have <strong>{data.stats.stock}</strong> units in stock selling <strong>{data.stats.velocity}</strong> per day.
-                </Text>
-              </Box>
+      <BlockStack gap="500">
+        
+        {/* EXECUTIVE SUMMARY CARD */}
+        <Layout>
+          <Layout.Section>
+            <Card>
+              <BlockStack gap="400">
+                <Text variant="headingLg" as="h2">Executive Summary</Text>
+                <Box background="bg-surface-secondary" padding="400" borderRadius="200">
+                  <BlockStack gap="200">
+                    <Text variant="bodyLg" as="p">{aiReport}</Text>
+                    <Text variant="caption" tone="subdued">Powered by OpenAI • {new Date().toLocaleDateString()}</Text>
+                  </BlockStack>
+                </Box>
 
-              <BlockStack gap="300">
-                {lines.map((line, index) => (
-                   <div key={index} style={{ borderLeft: '3px solid #008060', paddingLeft: '15px' }}>
-                      <Text as="p" variant="bodyLg">{line}</Text>
-                   </div>
-                ))}
+                <Divider />
+
+                {/* KPI GRID */}
+                <InlineGrid columns={4} gap="400">
+                  <Box>
+                    <Text variant="headingXs" tone="subdued">TOTAL VALUATION</Text>
+                    <Text variant="headingLg">${stats.totalStockValue.toLocaleString()}</Text>
+                  </Box>
+                  <Box>
+                    <Text variant="headingXs" tone="subdued">STOCKOUTS</Text>
+                    <Text variant="headingLg" tone={stats.outOfStockCount > 0 ? "critical" : "success"}>
+                      {stats.outOfStockCount}
+                    </Text>
+                  </Box>
+                  <Box>
+                    <Text variant="headingXs" tone="subdued">HIGH RISK ITEMS</Text>
+                    <Text variant="headingLg" tone={stats.highRiskCount > 5 ? "critical" : "attention"}>
+                      {stats.highRiskCount}
+                    </Text>
+                  </Box>
+                  <Box>
+                    <Text variant="headingXs" tone="subdued">ACTIVE SKUS</Text>
+                    <Text variant="headingLg">{stats.totalItems}</Text>
+                  </Box>
+                </InlineGrid>
               </BlockStack>
-              
-              <Text variant="caption" tone="subdued">
-                Powered by OpenAI GPT-3.5 • Analysis generated on {new Date().toLocaleDateString()}
-              </Text>
-            </BlockStack>
-          </Card>
-        </Layout.Section>
-      </Layout>
+            </Card>
+          </Layout.Section>
+        </Layout>
+
+        {/* FULL INVENTORY TABLE WITH SPARKLINES */}
+        <Layout>
+          <Layout.Section>
+            <Card padding="0">
+              <IndexTable
+                resourceName={resourceName}
+                itemCount={items.length}
+                selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
+                onSelectionChange={handleSelectionChange}
+                headings={[
+                  { title: 'Product Details' },
+                  { title: 'Stock' },
+                  { title: '30-Day Trend' }, // Sparkline Header
+                  { title: 'Velocity' },
+                  { title: 'Health Status' },
+                ]}
+              >
+                {rowMarkup}
+              </IndexTable>
+            </Card>
+          </Layout.Section>
+        </Layout>
+
+      </BlockStack>
     </Page>
   );
 }
