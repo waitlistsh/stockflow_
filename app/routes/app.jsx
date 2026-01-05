@@ -4,11 +4,9 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 
-// 1. IMPORT THE TRANSLATIONS (The Dictionary)
-import polarisTranslations from "@shopify/polaris/locales/en.json";
-
-// 2. IMPORT THE STYLES (The CSS)
-import "@shopify/polaris/build/esm/styles.css";
+import { AppProvider } from '@shopify/polaris';
+import enTranslations from '@shopify/polaris/locales/en.json';
+import '@shopify/polaris/build/esm/styles.css';
 
 import { authenticate } from "../shopify.server";
 
@@ -20,9 +18,11 @@ export const loader = async ({ request }) => {
 export default function App() {
   const { apiKey } = useLoaderData();
 
+  // DEBUG: Check your terminal/browser console to see if this prints!
+  console.log("Translation File Loaded:", enTranslations); 
+
   return (
-    // 3. PASS THE TRANSLATIONS TO THE PROVIDER
-    <AppProvider isEmbeddedApp apiKey={apiKey} i18n={polarisTranslations}>
+    <AppProvider isEmbeddedApp apiKey={apiKey} i18n={enTranslations}>
       <NavMenu>
         <Link to="/app" rel="home">Home</Link>
         <Link to="/app/settings">Settings</Link>

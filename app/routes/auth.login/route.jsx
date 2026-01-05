@@ -3,6 +3,8 @@ import { useState } from "react";
 import { Form, useActionData, useLoaderData } from "react-router";
 import { login } from "../../shopify.server";
 import { loginErrorMessage } from "./error.server";
+// 1. Import the translations
+import polarisTranslations from "@shopify/polaris/locales/en.json";
 
 export const loader = async ({ request }) => {
   const errors = loginErrorMessage(await login(request));
@@ -25,7 +27,8 @@ export default function Auth() {
   const { errors } = actionData || loaderData;
 
   return (
-    <AppProvider embedded={false}>
+    // 2. Add the i18n prop to AppProvider
+    <AppProvider embedded={false} i18n={polarisTranslations}>
       <s-page>
         <Form method="post">
           <s-section heading="Log in">
