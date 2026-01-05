@@ -8,6 +8,7 @@ import { HomeIcon, ProductIcon, SettingsIcon } from '@shopify/polaris-icons';
 import enTranslations from '@shopify/polaris/locales/en.json';
 import '@shopify/polaris/build/esm/styles.css';
 import { authenticate } from "../shopify.server";
+import { TitleBar } from "@shopify/app-bridge-react";
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -18,6 +19,7 @@ export default function App() {
   const { apiKey } = useLoaderData();
   const location = useLocation();
   const navigate = useNavigate();
+  const { pathname, search } = useLocation();
 
   return (
     <ShopifyAppProvider isEmbeddedApp apiKey={apiKey}>

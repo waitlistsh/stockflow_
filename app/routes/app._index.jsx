@@ -156,11 +156,34 @@ export default function Index() {
   });
 
   return (
-    <Page 
-      title="Inventory Forecast" 
-      primaryAction={<Button icon={RefreshIcon} variant="primary" loading={isLoading} onClick={() => fetcher.submit({}, { method: "POST" })}>Sync & Refresh</Button>}
-      secondaryActions={[{ content: "Settings", icon: SettingsIcon, onAction: () => navigate("settings" + window.location.search) }]}
-    >
+  <Page
+    title="Inventory Forecast"
+    primaryAction={
+      <Button 
+        icon={RefreshIcon} 
+        variant="primary" 
+        loading={isLoading} 
+        onClick={() => fetcher.submit({}, { method: "POST" })}
+      >
+        Sync & Refresh
+      </Button>
+    }
+    secondaryActions={[
+      {
+        content: "Dashboard",
+        onAction: () => navigate("/app" + window.location.search),
+      },
+      {
+        content: "Inventory Analysis",
+        onAction: () => navigate("/app/analyze" + window.location.search),
+      },
+      {
+        content: "Settings",
+        icon: SettingsIcon,
+        onAction: () => navigate("/app/settings" + window.location.search),
+      },
+    ]}
+  >
       <BlockStack gap="500">
         
         {aiSummary && (
