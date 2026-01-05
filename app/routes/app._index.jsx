@@ -11,11 +11,12 @@ import {
   Text, 
   Badge, 
   Button, 
-  BlockStack,
   InlineStack,
+  BlockStack,
   Banner
 } from "@shopify/polaris";
 import { RefreshIcon, SettingsIcon } from "@shopify/polaris-icons";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 
 // --- SERVER SIDE ---
 export const action = async ({ request }) => {
@@ -28,8 +29,10 @@ export const action = async ({ request }) => {
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
 
+  // 1. Fetch Items & Sales
   const items = await prisma.inventoryItem.findMany({ include: { sales: true } });
 
+  // 2. Prepare Table Data (Risk Analysis)
   const forecastData = items.map(item => {
     const totalSold = item.sales.reduce((sum, day) => sum + day.quantitySold, 0);
     const daysWithData = item.sales.length || 1; 
@@ -37,7 +40,7 @@ export const loader = async ({ request }) => {
     const daysRemaining = velocity > 0 ? Math.round(item.inventory / velocity) : 999;
 
     return {
-      id: item.id, // Needed for Polaris table
+      id: item.id,
       title: item.title,
       inventory: item.inventory,
       velocity: velocity.toFixed(2),
@@ -45,19 +48,53 @@ export const loader = async ({ request }) => {
       riskLevel: daysRemaining < 14 ? "HIGH" : daysRemaining < 30 ? "MEDIUM" : "LOW"
     };
   });
-
+  
   forecastData.sort((a, b) => a.daysRemaining - b.daysRemaining);
-  return { forecastData };
+
+  // 3. Prepare Chart Data (Sales over Time)
+  // We need to group all sales from all products by date
+  const salesByDate = {};
+  
+  items.forEach(item => {
+    item.sales.forEach(sale => {
+      // Format date as "Jan 05"
+      const dateKey = new Date(sale.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      
+      if (!salesByDate[dateKey]) {
+        salesByDate[dateKey] = 0;
+      }
+      salesByDate[dateKey] += sale.revenue;
+    });
+  });
+
+  // Convert to array for Recharts
+  // Take only the last 14 days and sort them
+  const chartData = Object.entries(salesByDate)
+    .map(([name, value]) => ({ name, sales: value }))
+    .slice(-14); 
+
+
+  if (chartData.length === 0) {
+    console.log("⚠️ No real data found. Using dummy data for testing.");
+    chartData = [
+      { name: "Jan 01", sales: 150 },
+      { name: "Jan 02", sales: 200 },
+      { name: "Jan 03", sales: 50 },
+      { name: "Jan 04", sales: 300 },
+      { name: "Jan 05", sales: 120 },
+    ];
+  }  
+
+  return { forecastData, chartData };
 };
 
 // --- FRONTEND UI ---
 export default function Index() {
-  const { forecastData } = useLoaderData(); 
+  const { forecastData, chartData } = useLoaderData(); 
   const fetcher = useFetcher();
   const navigate = useNavigate();
   const isLoading = fetcher.state === "submitting";
 
-  // Configuration for the Table Columns
   const resourceName = { singular: 'product', plural: 'products' };
   
   const rowMarkup = forecastData.map(
@@ -78,8 +115,7 @@ export default function Index() {
             <Badge tone={riskLevel === "HIGH" ? "critical" : riskLevel === "MEDIUM" ? "attention" : "success"}>
               {riskLevel}
             </Badge>
-            {/* AI BUTTON (Only shows if Risk is High/Medium) */}
-            {(riskLevel === "HIGH" || riskLevel === "MEDIUM" || true) && ( // remove "|| true" later
+            {(riskLevel === "HIGH" || riskLevel === "MEDIUM") && ( 
                <Button 
                  variant="plain" 
                  onClick={() => navigate(`/app/analyze?product=${encodeURIComponent(title)}&velocity=${velocity}&stock=${inventory}`)}
@@ -114,32 +150,68 @@ export default function Index() {
         }
       ]}
     >
-      <Layout>
-        <Layout.Section>
-          {forecastData.length === 0 ? (
-             <Banner title="Welcome to InventoryFlow" tone="info">
-               <p>Click "Sync & Refresh" to pull your latest sales data and calculate risks.</p>
-             </Banner>
-          ) : (
-            <Card padding="0">
-              <IndexTable
-                resourceName={resourceName}
-                itemCount={forecastData.length}
-                headings={[
-                  { title: 'Product' },
-                  { title: 'Stock Level' },
-                  { title: 'Sales Velocity' },
-                  { title: 'Runway (Days)' },
-                  { title: 'Risk & Action' },
-                ]}
-                selectable={false}
-              >
-                {rowMarkup}
-              </IndexTable>
-            </Card>
-          )}
-        </Layout.Section>
-      </Layout>
+      <BlockStack gap="500">
+        
+        {/* SECTION 1: THE CHART */}
+        {chartData.length > 0 && (
+          <Layout>
+            <Layout.Section>
+              <Card>
+                <BlockStack gap="400">
+                  <Text variant="headingMd" as="h2">Total Revenue (Last 14 Days)</Text>
+                  <div style={{ width: '100%', height: 300 }}>
+                    <ResponsiveContainer>
+                      <BarChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                        <XAxis dataKey="name" fontSize={12} tickLine={false} axisLine={false} />
+                        <YAxis 
+                          tickFormatter={(value) => `$${value}`} 
+                          fontSize={12} 
+                          tickLine={false} 
+                          axisLine={false} 
+                        />
+                        <Tooltip 
+                          cursor={{ fill: '#f4f6f8' }}
+                          formatter={(value) => [`$${value.toFixed(2)}`, 'Revenue']}
+                        />
+                        <Bar dataKey="sales" fill="#008060" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </BlockStack>
+              </Card>
+            </Layout.Section>
+          </Layout>
+        )}
+
+        {/* SECTION 2: THE TABLE */}
+        <Layout>
+          <Layout.Section>
+            {forecastData.length === 0 ? (
+               <Banner title="Welcome to Stockflow" tone="info">
+                 <p>Click "Sync & Refresh" to pull your latest sales data.</p>
+               </Banner>
+            ) : (
+              <Card padding="0">
+                <IndexTable
+                  resourceName={resourceName}
+                  itemCount={forecastData.length}
+                  headings={[
+                    { title: 'Product' },
+                    { title: 'Stock Level' },
+                    { title: 'Sales Velocity' },
+                    { title: 'Runway (Days)' },
+                    { title: 'Risk & Action' },
+                  ]}
+                  selectable={false}
+                >
+                  {rowMarkup}
+                </IndexTable>
+              </Card>
+            )}
+          </Layout.Section>
+        </Layout>
+      </BlockStack>
     </Page>
   );
 }
