@@ -1,11 +1,8 @@
-// 1. Add 'useNavigate' to your react-router imports
-import { useLoaderData, useNavigation, useNavigate } from "react-router"; 
-
+// app/routes/app.analyze.jsx
+import { useLoaderData, useNavigation, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import OpenAI from "openai";
-
-// 2. Add 'Button' to your Polaris imports
 import {
   Page,
   Layout,
@@ -13,14 +10,12 @@ import {
   Text,
   BlockStack,
   Banner,
-  Link,
   Spinner,
   Box,
-  Button // <--- ADD THIS
+  Button
 } from "@shopify/polaris";
 
 export const loader = async ({ request }) => {
-  // This helper needs the shop and host params to stay in the URL
   const { session } = await authenticate.admin(request);
   const url = new URL(request.url);
   
@@ -28,7 +23,6 @@ export const loader = async ({ request }) => {
   const velocity = url.searchParams.get("velocity");
   const stock = url.searchParams.get("stock");
 
-  // Fetch the key from your database settings
   const settings = await prisma.merchantSettings.findUnique({
     where: { shop: session.shop }
   });
@@ -72,12 +66,11 @@ export const loader = async ({ request }) => {
 export default function Analyze() {
   const data = useLoaderData();
   const navigation = useNavigation();
+  const navigate = useNavigate(); // ADD THIS LINE TO FIX THE NAVIGATION ERROR
   
-  
-  // This detects if the AI is currently "thinking"
-  const isLoading = navigation.state === "loading";
+  const isInitialLoading = navigation.state === "loading" && !data;
 
-  if (isLoading) {
+  if (isInitialLoading) {
     return (
       <Page>
         <div style={{display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '50vh', alignItems: 'center', gap: '20px'}}>
@@ -88,31 +81,31 @@ export default function Analyze() {
     );
   }
 
-  if (data.error === "NO_KEY") {
-  return (
-    <Page title="AI Analysis" backAction={{ url: "/app" }}>
-      <Layout>
-        <Layout.Section>
-          <Banner title="OpenAI Key Missing" tone="warning">
-            <p>
-              You need to configure your API key before using this feature.
-              {' '}
-              {/* FIX: Use a button or a relative navigate to keep the session alive */}
-              <Button 
-                variant="plain" 
-                onClick={() => navigate(`../settings${window.location.search}`)}
-              >
-                Go to Settings
-              </Button>
-            </p>
-          </Banner>
-        </Layout.Section>
-      </Layout>
-    </Page>
-  );
-}
+  // data is now properly defined from useLoaderData() above
+  if (data?.error === "NO_KEY") {
+    return (
+      <Page title="AI Analysis" backAction={{ url: "/app" }}>
+        <Layout>
+          <Layout.Section>
+            <Banner title="OpenAI Key Missing" tone="warning">
+              <p>
+                You need to configure your API key before using this feature.
+                {' '}
+                <Button 
+                  variant="plain" 
+                  onClick={() => navigate(`../settings${window.location.search}`)}
+                >
+                  Go to Settings
+                </Button>
+              </p>
+            </Banner>
+          </Layout.Section>
+        </Layout>
+      </Page>
+    );
+  }
 
-  if (data.error) {
+  if (data?.error) {
     return (
       <Page title="AI Analysis" backAction={{ url: "/app" }}>
         <Banner title="Error generating report" tone="critical">
@@ -159,4 +152,3 @@ export default function Analyze() {
     </Page>
   );
 }
-

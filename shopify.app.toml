@@ -33,3 +33,13 @@ redirect_urls = [
   "https://stockflow-ziaq.onrender.com/auth/shopify/callback",
   "https://stockflow-ziaq.onrender.com/api/auth/callback"
 ]
+
+[navigation]
+# This controls the left-hand sidebar menu in the Shopify Admin
+[[navigation.links]]
+label = "Inventory Forecast"
+destination = "/app"
+
+[[navigation.links]]
+label = "Settings"
+destination = "/app/settings"
