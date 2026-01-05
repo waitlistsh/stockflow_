@@ -18,19 +18,15 @@ export default function App() {
 
   return (
     <ShopifyAppProvider isEmbeddedApp apiKey={apiKey}>
-      {/* 1. PolarisAppProvider MUST wrap everything to provide i18n/context */}
       <PolarisAppProvider i18n={enTranslations}>
-        
-        {/* 2. NavMenu handles the sidebar submenu in the Shopify Admin */}
+      
         <NavMenu>
           <Link to="/app" rel="home">Home</Link>
           <Link to="/app/analyze">Inventory Analysis</Link>
           <Link to="/app/settings">Settings</Link>
         </NavMenu>
 
-        {/* 3. Outlet renders the content of your pages (Home, Settings, Analyze) */}
         <Outlet />
-        
       </PolarisAppProvider>
     </ShopifyAppProvider>
   );
