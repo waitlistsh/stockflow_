@@ -232,3 +232,48 @@ export async function syncSuppliers(admin, shop) {
 
   return count;
 }
+
+export async function updateInventory(admin, inventoryItemId, locationId, delta) {
+  const response = await admin.graphql(
+    `#graphql
+      mutation inventoryAdjustQuantities($input: InventoryAdjustQuantitiesInput!) {
+        inventoryAdjustQuantities(input: $input) {
+          inventoryAdjustmentGroup {
+            reason
+            changes {
+              name
+              delta
+            }
+          }
+          userErrors {
+            field
+            message
+          }
+        }
+      }`,
+    {
+      variables: {
+        input: {
+          reason: "movement_created", // "received" is also valid if you want to track it as a reception
+          name: "available",
+          changes: [
+            {
+              inventoryItemId: inventoryItemId,
+              locationId: locationId,
+              delta: delta
+            }
+          ]
+        }
+      }
+    }
+  );
+
+  const data = await response.json();
+  
+  if (data.data.inventoryAdjustQuantities.userErrors.length > 0) {
+    console.error("Inventory update failed:", data.data.inventoryAdjustQuantities.userErrors);
+    throw new Error(data.data.inventoryAdjustQuantities.userErrors[0].message);
+  }
+
+  return data.data.inventoryAdjustQuantities.inventoryAdjustmentGroup;
+}
