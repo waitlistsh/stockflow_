@@ -275,6 +275,10 @@ export default function Index() {
         onAction: () => navigate("/app/suppliers" + window.location.search),
       },
       {
+        content: "Purchase Orders",
+        onAction: () => navigate("/app/purchase_orders" + window.location.search),
+      },
+      {
         content: "Settings",
         icon: SettingsIcon,
         onAction: () => navigate("/app/settings" + window.location.search),

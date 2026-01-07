@@ -1,15 +1,15 @@
 // app/routes/app.purchase_orders.jsx
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useLoaderData, useFetcher, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { generatePO } from "../utils/pdfGenerator";
-import { updatePurchaseOrder } from "../services/po.server";
+import { updatePurchaseOrder, receivePurchaseOrder } from "../services/po.server"; // Import receive function
 import {
   Page, Layout, Card, IndexTable, Text, Badge, Button, Modal, 
-  useIndexResourceState, TextField, BlockStack, InlineStack
+  useIndexResourceState, TextField, BlockStack, InlineStack, Tooltip
 } from "@shopify/polaris";
-import { PageDownIcon, EditIcon, DeleteIcon } from "@shopify/polaris-icons";
+import { PageDownIcon, EditIcon, DeleteIcon, ImportIcon } from "@shopify/polaris-icons"; // Added ImportIcon
 
 // --- LOADER ---
 export const loader = async ({ request }) => {
@@ -23,7 +23,7 @@ export const loader = async ({ request }) => {
 
 // --- ACTION ---
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
   const id = formData.get("id");
@@ -39,6 +39,13 @@ export const action = async ({ request }) => {
     return { status: "updated" };
   }
 
+  // --- NEW: Receive Action ---
+  if (intent === "receive") {
+    // You need to ensure receivePurchaseOrder is exported from app/services/po.server.js
+    await receivePurchaseOrder(admin, session.shop, id);
+    return { status: "received" };
+  }
+
   return null;
 };
 
@@ -49,12 +56,17 @@ export default function PurchaseOrders() {
   const navigate = useNavigate();
 
   // Modal State
-  const [activePo, setActivePo] = useState(null); // The PO being edited
-  const [editItems, setEditItems] = useState([]); // The items in the modal
+  const [activePo, setActivePo] = useState(null); 
+  const [editItems, setEditItems] = useState([]); 
+
+  useEffect(() => {
+    if (fetcher.data?.status === "received") {
+        window.shopify.toast.show("Inventory updated successfully");
+    }
+  }, [fetcher.data]);
 
   const handleEditClick = (po) => {
     setActivePo(po);
-    // Ensure deep copy of items to avoid mutating directly
     setEditItems(JSON.parse(JSON.stringify(po.items)));
   };
 
@@ -79,11 +91,17 @@ export default function PurchaseOrders() {
     handleCloseModal();
   };
 
+  // --- NEW: Handle Receive ---
+  const handleReceive = (po) => {
+    if (confirm(`Receive PO #${po.poNumber}? This will add stock to your inventory.`)) {
+        fetcher.submit({ intent: "receive", id: po.id }, { method: "POST" });
+    }
+  };
+
   const handleDownloadPDF = (po) => {
-    // Reconstruct full item objects for the PDF generator
     const itemsForPdf = po.items.map(i => ({
       ...i,
-      vendor: po.vendor // Ensure vendor is attached for grouping logic
+      vendor: po.vendor 
     }));
     
     generatePO(itemsForPdf, { shopHandle }, {
@@ -92,7 +110,6 @@ export default function PurchaseOrders() {
     });
   };
 
-  // --- Table Configuration ---
   const resourceName = { singular: 'purchase order', plural: 'purchase orders' };
   const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(pos);
 
@@ -106,6 +123,12 @@ export default function PurchaseOrders() {
       <IndexTable.Cell><Badge tone={po.status === "OPEN" ? "info" : "success"}>{po.status}</Badge></IndexTable.Cell>
       <IndexTable.Cell>
         <InlineStack gap="200">
+           {/* --- NEW: Receive Button --- */}
+           {po.status === "OPEN" && (
+             <Tooltip content="Mark Received & Add Stock">
+                <Button icon={ImportIcon} onClick={() => handleReceive(po)} accessibilityLabel="Receive Items" />
+             </Tooltip>
+           )}
            <Button icon={PageDownIcon} onClick={() => handleDownloadPDF(po)} accessibilityLabel="Download PDF" />
            <Button icon={EditIcon} onClick={() => handleEditClick(po)} accessibilityLabel="Edit PO" />
            <Button icon={DeleteIcon} tone="critical" onClick={() => fetcher.submit({intent: "delete", id: po.id}, {method: "POST"})} />
@@ -140,7 +163,7 @@ export default function PurchaseOrders() {
         </Layout.Section>
       </Layout>
 
-      {/* --- EDIT MODAL --- */}
+      {/* --- EDIT MODAL (Unchanged) --- */}
       {activePo && (
         <Modal
           open={true}

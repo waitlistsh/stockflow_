@@ -1,10 +1,6 @@
 // app/services/po.server.js
 import prisma from "../db.server";
 
-/**
- * Creates Internal Purchase Orders.
- * No interaction with Shopify Draft Orders.
- */
 export async function createPurchaseOrders(shop, items) {
   // 1. Group items by Vendor
   const groupedItems = items.reduce((acc, item) => {
@@ -33,13 +29,17 @@ export async function createPurchaseOrders(shop, items) {
 
     currentPoNum++; 
     
-    // Calculate total based on what data structure is passed
+    // --- NEW: Fetch Supplier Details ---
+    const supplier = await prisma.supplier.findFirst({
+      where: { shop, name: vendor }
+    });
+    // -----------------------------------
+
     const totalCost = itemsToOrder.reduce((sum, i) => {
         const qty = i.quantity !== undefined ? i.quantity : i.suggestedOrderQty;
         return sum + (i.cost * qty);
     }, 0);
 
-    // Sanitize items for storage (snapshot)
     const snapshotItems = itemsToOrder.map(i => ({
         id: i.id,
         sku: i.sku,
@@ -53,9 +53,13 @@ export async function createPurchaseOrders(shop, items) {
         shop,
         poNumber: currentPoNum,
         vendor,
+        // --- NEW: Save Snapshot ---
+        vendorAddress: supplier?.address,
+        paymentTerms: supplier?.paymentTerms,
+        // --------------------------
         totalCost,
         status: "OPEN",
-        items: snapshotItems // Save valid JSON
+        items: snapshotItems 
       }
     });
 
@@ -71,18 +75,10 @@ export async function createPurchaseOrders(shop, items) {
   return results;
 }
 
-/**
- * Updates an existing PO (e.g. from the PO Dashboard).
- */
 export async function updatePurchaseOrder(id, items) {
-    // items should be [{ title, sku, cost, quantity }]
     const totalCost = items.reduce((sum, i) => sum + (i.cost * i.quantity), 0);
-    
     return await prisma.purchaseOrder.update({
         where: { id },
-        data: {
-            items: items, // Update the JSON snapshot
-            totalCost: totalCost
-        }
+        data: { items: items, totalCost: totalCost }
     });
 }

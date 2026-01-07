@@ -1,12 +1,13 @@
 // app/routes/app.suppliers.jsx
-import { useEffect } from "react"; // Import useEffect
+import { useEffect } from "react";
 import { useLoaderData, useNavigate, useFetcher } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
+import { syncSuppliers } from "../services/inventory.server"; // Make sure this function exists
 import {
-  Page, Layout, Card, IndexTable, Text, Button
+  Page, Layout, Card, IndexTable, Text, Button, Banner
 } from "@shopify/polaris";
-import { PlusIcon, SettingsIcon } from "@shopify/polaris-icons"; 
+import { PlusIcon, SettingsIcon, ImportIcon } from "@shopify/polaris-icons"; 
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -17,23 +18,26 @@ export const loader = async ({ request }) => {
 };
 
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
+  const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
+  const intent = formData.get("intent");
   
-  if (formData.get("intent") === "create") {
-    // Generate unique name to prevent duplicates
+  if (intent === "create") {
     const uniqueSuffix = Math.floor(Math.random() * 10000);
     const name = `New Supplier ${uniqueSuffix}`;
-    
     const supplier = await prisma.supplier.create({
-      data: {
-        shop: session.shop,
-        name: name,
-        leadTime: 14
-      }
+      data: { shop: session.shop, name: name, leadTime: 14 }
     });
     return { status: "created", id: supplier.id };
   }
+
+  // --- NEW: Import Vendors from Shopify ---
+  if (intent === "import_shopify") {
+    // Ensure you have added the syncSuppliers function to app/services/inventory.server.js
+    const count = await syncSuppliers(admin, session.shop);
+    return { status: "imported", count };
+  }
+
   return null;
 };
 
@@ -45,11 +49,17 @@ export default function Suppliers() {
   const handleCreate = () => {
     fetcher.submit({ intent: "create" }, { method: "POST" });
   };
+
+  const handleImport = () => {
+    fetcher.submit({ intent: "import_shopify" }, { method: "POST" });
+  };
   
-  // --- FIX: Wrap navigation in useEffect to prevent blank page crash ---
   useEffect(() => {
     if (fetcher.data?.status === "created") {
       navigate(`/app/supplier/${fetcher.data.id}` + window.location.search);
+    }
+    if (fetcher.data?.status === "imported") {
+      window.shopify.toast.show(`Imported ${fetcher.data.count} vendors`);
     }
   }, [fetcher.data, navigate]);
 
@@ -79,6 +89,13 @@ export default function Suppliers() {
         </Button>
       }
       secondaryActions={[
+        // --- NEW BUTTON ---
+        {
+          content: "Import from Shopify",
+          icon: ImportIcon,
+          onAction: handleImport,
+          loading: fetcher.state === "submitting" && fetcher.formData?.get("intent") === "import_shopify"
+        },
         {
           content: "Dashboard",
           onAction: () => navigate("/app" + window.location.search),
@@ -96,6 +113,11 @@ export default function Suppliers() {
     >
       <Layout>
         <Layout.Section>
+          {suppliers.length === 0 && (
+             <Banner title="Get Started" tone="info">
+               <p>Click "Import from Shopify" to automatically load your existing vendors.</p>
+             </Banner>
+           )}
           <Card padding="0">
             <IndexTable
               resourceName={{ singular: 'supplier', plural: 'suppliers' }}

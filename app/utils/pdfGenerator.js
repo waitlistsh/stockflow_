@@ -14,13 +14,16 @@ export const generatePO = (itemsToPrint, shopDetails = {}, customOptions = {}) =
       ? shopDetails.shopHandle.toUpperCase().replace(/-/g, " ")
       : "MY STORE";
 
-    // Support overriding the PO Number/Date (for re-printing saved POs)
     const { 
       poNumberOverride, 
-      dateOverride 
+      dateOverride,
+      // --- NEW OPTIONS ---
+      vendorAddress,
+      paymentTerms
+      // -------------------
     } = customOptions;
 
-    // Group by Vendor if not already grouped (Handling single PO vs Bulk)
+    // Group by Vendor
     const groupedItems = itemsToPrint.reduce((acc, item) => {
       const vendor = item.vendor || "Unknown Vendor";
       if (!acc[vendor]) acc[vendor] = [];
@@ -32,7 +35,6 @@ export const generatePO = (itemsToPrint, shopDetails = {}, customOptions = {}) =
     const rightMarginX = 195;
 
     Object.keys(groupedItems).forEach((vendor, index) => {
-      // Filter items with 0 qty unless specifically forced (e.g. from saved PO)
       const itemsToOrder = groupedItems[vendor].filter(
         (i) => (i.quantity || i.suggestedOrderQty) > 0
       );
@@ -87,7 +89,20 @@ export const generatePO = (itemsToPrint, shopDetails = {}, customOptions = {}) =
       addressYStart += 6;
       doc.text(vendor, vendorX, addressYStart);
       addressYStart += 6;
-      doc.text("Vendor Address", vendorX, addressYStart); // Placeholder
+      
+      // --- NEW: Dynamic Address ---
+      const addressText = vendorAddress || "Address not on file";
+      const splitAddress = doc.splitTextToSize(addressText, 80);
+      doc.text(splitAddress, vendorX, addressYStart);
+      
+      // --- NEW: Payment Terms ---
+      if (paymentTerms) {
+        // Move Y down based on how many lines the address took
+        const termsY = addressYStart + (splitAddress.length * 5) + 5;
+        doc.setFont("helvetica", "bold");
+        doc.text(`Terms: ${paymentTerms}`, vendorX, termsY);
+      }
+      // --------------------------
 
       yPos = 70;
 
@@ -96,7 +111,6 @@ export const generatePO = (itemsToPrint, shopDetails = {}, customOptions = {}) =
 
       const tableColumn = ["SKU", "Item Name", "Quantity", "Unit Cost", "Total"];
       const tableRows = itemsToOrder.map((item) => {
-        // Handle both 'suggestedOrderQty' (Analyze page) and 'quantity' (Saved PO)
         const orderQty = item.quantity !== undefined ? item.quantity : item.suggestedOrderQty;
         const unitCost = item.cost || 0;
         const lineTotal = orderQty * unitCost;

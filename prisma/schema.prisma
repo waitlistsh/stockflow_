@@ -76,26 +76,27 @@ model MerchantSettings {
 }
 
 model Supplier {
-  id          String   @id @default(uuid())
-  shop        String
-  name        String
-  email       String?
-  contactName String?
-  leadTime    Int      @default(14)
-  items       InventoryItem[]
+  id           String   @id @default(uuid())
+  shop         String
+  name         String
+  email        String?
+  contactName  String?
+  address      String?
+  paymentTerms String?   // e.g. "Net 30", "Due on Receipt"
+  leadTime     Int      @default(14)
+  items        InventoryItem[]
   @@unique([shop, name])
 }
 
-// --- UPDATED PO MODEL ---
 model PurchaseOrder {
   id          String   @id @default(uuid())
   shop        String
   poNumber    Int
   createdAt   DateTime @default(now())
   vendor      String
+  vendorAddress String?
+  paymentTerms  String?
   totalCost   Float
-  status      String   @default("OPEN") // OPEN, SENT, RECEIVED, CLOSED
-  
-  // Stores the snapshot: [{ title, sku, quantity, cost, ... }]
+  status      String   @default("OPEN") 
   items       Json     
 }

@@ -14,8 +14,6 @@ import {
 import { RefreshIcon, SettingsIcon, PinIcon, PageDownIcon, DiscountIcon } from "@shopify/polaris-icons"; 
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 
-
-
 function EditableCell({ value: initialValue, onSave }) {
   const [value, setValue] = useState(initialValue);
 
@@ -46,7 +44,6 @@ function EditableCell({ value: initialValue, onSave }) {
   );
 }
 
-// ... (getSparklineData remains the same) ...
 const getSparklineData = (salesHistory) => {
   const data = [];
   const today = new Date();
@@ -248,7 +245,7 @@ export default function ProfessionalAnalysis() {
         title: i.title,
         vendor: i.vendor,
         cost: i.cost,
-        quantity: i.suggestedOrderQty // Default to suggested
+        quantity: i.suggestedOrderQty > 0 ? i.suggestedOrderQty : 0
     }));
     setReviewItems(cleanItems);
     setIsReviewOpen(true);
@@ -273,13 +270,18 @@ export default function ProfessionalAnalysis() {
   // 4. Success Listener
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.status === "po_created") {
-        shopify.toast.show("Purchase Orders Created");
+        // Safe check for window.shopify to prevent crash
+        if (window.shopify?.toast) {
+            window.shopify.toast.show("Purchase Orders Created");
+        } else {
+            console.log("Purchase Orders Created");
+        }
+        
         // Redirect to the new PO Dashboard
-        navigate("/app/purchase_orders");
+        navigate("/app/purchase_orders" + window.location.search);
     }
   }, [fetcher.state, fetcher.data, navigate]);
 
-  // --- CHANGE HERE: PDF Logic moved to utility file ---
 
   const handleQueryValueChange = useCallback((value) => setQueryValue(value), []);
   const handleStatusChange = useCallback((value) => setSelectedStatus(value), []);
@@ -339,13 +341,14 @@ export default function ProfessionalAnalysis() {
   const resourceName = { singular: 'product', plural: 'products' };
   const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(sortedItems);
 
-  // --- CHANGE HERE: BULK ACTIONS uses external utility ---
- const promotedBulkActions = [
+  // --- FIXED BULK ACTIONS ---
+  const promotedBulkActions = [
     {
       content: 'Generate PO for Selected',
       onAction: () => {
         const selectedItems = sortedItems.filter(item => selectedResources.includes(item.id));
-        handleGeneratePO(selectedItems); 
+        // FIX: Use handleReviewClick instead of handleGeneratePO
+        handleReviewClick(selectedItems); 
       },
     },
   ];
@@ -463,15 +466,15 @@ export default function ProfessionalAnalysis() {
 
       <IndexTable.Cell>
         <ButtonGroup>
-          {/* CHANGE HERE: Individual PO Button uses external utility */}
+          {/* FIX: Individual Button triggers the Modal now */}
           <Tooltip content={`Generate PO for ${item.title}`}>
             <Button 
               icon={PageDownIcon} 
               variant="plain" 
               onClick={(e) => {
                 e.stopPropagation();
-                // Call utility func
-                generatePO([item], { shopHandle });
+                // Open the modal for this single item
+                handleReviewClick([item]);
               }} 
             />
           </Tooltip>
@@ -506,8 +509,28 @@ export default function ProfessionalAnalysis() {
         loading: isSyncing,
       }}
       secondaryActions={[
-        { content: "Settings", icon: SettingsIcon, onAction: () => navigate("/app/settings" + window.location.search) },
-      ]}
+      {
+        content: "Dashboard",
+        onAction: () => navigate("/app" + window.location.search),
+      },
+      {
+        content: "Inventory Analysis",
+        onAction: () => navigate("/app/analyze" + window.location.search),
+      },
+      {
+        content: "Supplier Management",
+        onAction: () => navigate("/app/suppliers" + window.location.search),
+      },
+      {
+        content: "Purchase Orders",
+        onAction: () => navigate("/app/purchase_orders" + window.location.search),
+      },
+      {
+        content: "Settings",
+        icon: SettingsIcon,
+        onAction: () => navigate("/app/settings" + window.location.search),
+      },
+    ]}
     >
       <BlockStack gap="500">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 1rem' }}>
@@ -585,6 +608,61 @@ export default function ProfessionalAnalysis() {
           </Layout.Section>
         </Layout>
       </BlockStack>
+
+      {/* --- ADDED: THE MISSING MODAL --- */}
+      {isReviewOpen && (
+        <Modal
+          open={true}
+          onClose={() => setIsReviewOpen(false)}
+          title="Review Purchase Orders"
+          primaryAction={{
+            content: 'Create POs',
+            onAction: handleConfirmCreate,
+          }}
+          secondaryActions={[
+            {
+              content: 'Cancel',
+              onAction: () => setIsReviewOpen(false),
+            },
+          ]}
+          large
+        >
+          <Modal.Section>
+            <Text as="p" variant="bodyMd" tone="subdued">
+               Review quantities before generating internal Purchase Orders.
+            </Text>
+            <Box paddingBlockStart="400">
+            <IndexTable
+               resourceName={{ singular: 'item', plural: 'items' }}
+               itemCount={reviewItems.length}
+               headings={[
+                 { title: 'Vendor' },
+                 { title: 'Product' },
+                 { title: 'Cost' },
+                 { title: 'Order Qty' }
+               ]}
+               selectable={false}
+            >
+              {reviewItems.map((item, index) => (
+                <IndexTable.Row key={index} id={item.id} position={index}>
+                  <IndexTable.Cell>{item.vendor}</IndexTable.Cell>
+                  <IndexTable.Cell>{item.title}</IndexTable.Cell>
+                  <IndexTable.Cell>${item.cost}</IndexTable.Cell>
+                  <IndexTable.Cell>
+                     <TextField 
+                       type="number" 
+                       value={String(item.quantity)} 
+                       onChange={(val) => handleReviewItemChange(index, val)}
+                       autoComplete="off"
+                     />
+                  </IndexTable.Cell>
+                </IndexTable.Row>
+              ))}
+            </IndexTable>
+            </Box>
+          </Modal.Section>
+        </Modal>
+      )}
     </Page>
   );
 }

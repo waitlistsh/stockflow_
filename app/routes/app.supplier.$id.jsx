@@ -5,7 +5,7 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import {
   Page, Layout, Card, Text, TextField, BlockStack, InlineGrid, 
-  IndexTable, Button, InlineStack, Box, Divider
+  IndexTable, Button, InlineStack, Box, Divider, Select
 } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
 
@@ -40,6 +40,9 @@ export const action = async ({ request, params }) => {
         email: formData.get("email"),
         contactName: formData.get("contactName"),
         leadTime: parseInt(formData.get("leadTime") || "14"),
+        // --- SAVE NEW FIELDS ---
+        address: formData.get("address"),
+        paymentTerms: formData.get("paymentTerms"),
       }
     });
     return { status: "updated" };
@@ -71,11 +74,14 @@ export default function SupplierDetail() {
   const navigate = useNavigate();
   const fetcher = useFetcher();
   
+  // --- ADDED NEW FIELDS TO STATE ---
   const [formState, setFormState] = useState({
     name: supplier.name,
     email: supplier.email || "",
     contactName: supplier.contactName || "",
-    leadTime: supplier.leadTime
+    leadTime: supplier.leadTime,
+    address: supplier.address || "",
+    paymentTerms: supplier.paymentTerms || "Net 30"
   });
 
   const handleSave = () => {
@@ -112,6 +118,13 @@ export default function SupplierDetail() {
     </IndexTable.Row>
   ));
 
+  const paymentOptions = [
+    {label: 'Net 30', value: 'Net 30'},
+    {label: 'Net 60', value: 'Net 60'},
+    {label: 'Due on Receipt', value: 'Due on Receipt'},
+    {label: 'Prepaid', value: 'Prepaid'},
+  ];
+
   return (
     <Page
       title={supplier.name}
@@ -126,11 +139,54 @@ export default function SupplierDetail() {
           <Card>
             <BlockStack gap="400">
               <Text variant="headingMd">Supplier Details</Text>
+              
               <InlineGrid columns={2} gap="400">
-                <TextField label="Company Name" value={formState.name} onChange={(val) => setFormState({...formState, name: val})} autoComplete="off" />
-                <TextField label="Lead Time (Days)" type="number" value={String(formState.leadTime)} onChange={(val) => setFormState({...formState, leadTime: val})} autoComplete="off" />
-                <TextField label="Contact Person" value={formState.contactName} onChange={(val) => setFormState({...formState, contactName: val})} autoComplete="off" />
-                <TextField label="Email Address" type="email" value={formState.email} onChange={(val) => setFormState({...formState, email: val})} autoComplete="off" />
+                <TextField 
+                  label="Company Name" 
+                  value={formState.name} 
+                  onChange={(val) => setFormState({...formState, name: val})} 
+                  autoComplete="off" 
+                />
+                <TextField 
+                  label="Contact Person" 
+                  value={formState.contactName} 
+                  onChange={(val) => setFormState({...formState, contactName: val})} 
+                  autoComplete="off" 
+                />
+                <TextField 
+                  label="Email Address" 
+                  type="email" 
+                  value={formState.email} 
+                  onChange={(val) => setFormState({...formState, email: val})} 
+                  autoComplete="off" 
+                />
+                 {/* --- NEW: Payment Terms Select --- */}
+                <Select
+                  label="Payment Terms"
+                  options={paymentOptions}
+                  onChange={(val) => setFormState({...formState, paymentTerms: val})}
+                  value={formState.paymentTerms}
+                />
+              </InlineGrid>
+
+               {/* --- NEW: Address Field (Full Width) --- */}
+              <TextField 
+                label="Full Address (Street, City, Zip, Country)" 
+                value={formState.address} 
+                onChange={(val) => setFormState({...formState, address: val})} 
+                multiline={3} 
+                autoComplete="off" 
+              />
+              
+              <InlineGrid columns={2} gap="400">
+                 <TextField 
+                   label="Lead Time (Days)" 
+                   type="number" 
+                   value={String(formState.leadTime)} 
+                   onChange={(val) => setFormState({...formState, leadTime: val})} 
+                   autoComplete="off" 
+                   helpText="Average time from order to delivery."
+                 />
               </InlineGrid>
             </BlockStack>
           </Card>
@@ -171,12 +227,6 @@ export default function SupplierDetail() {
             >
               {rowMarkup}
             </IndexTable>
-            
-            {supplier.items.length === 0 && (
-              <Box padding="400">
-                <Text tone="subdued" alignment="center">No products assigned yet. Use the dropdown above to link products.</Text>
-              </Box>
-            )}
           </Card>
         </Layout.Section>
       </Layout>
