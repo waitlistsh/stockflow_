@@ -8,24 +8,45 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
 export const action = async ({ request }) => {
-  const { session } = await authenticate.admin(request);
-  const formData = await request.formData();
+  console.log("--- ACTION STARTED ---"); // Debug 1
   
-  const openaiKey = formData.get("openaiKey");
-  const riskDaysCritical = parseInt(formData.get("riskDaysCritical") || "14");
-  const riskDaysWarning = parseInt(formData.get("riskDaysWarning") || "30");
-  
-  // Handle PO Settings
-  const lastPoNumber = parseInt(formData.get("lastPoNumber") || "1000");
-  const syncDraftOrders = formData.get("syncDraftOrders") === "on";
+  try {
+    const { session } = await authenticate.admin(request);
+    console.log("Session found:", session.shop); // Debug 2
 
-  await prisma.merchantSettings.upsert({
-    where: { shop: session.shop },
-    update: { openaiKey, riskDaysCritical, riskDaysWarning, lastPoNumber, syncDraftOrders },
-    create: { shop: session.shop, openaiKey, riskDaysCritical, riskDaysWarning, lastPoNumber, syncDraftOrders }
-  });
+    const formData = await request.formData();
+    console.log("Form Data received"); // Debug 3
+    
+    const openaiKey = formData.get("openaiKey");
+    const riskDaysCritical = parseInt(formData.get("riskDaysCritical") || "14");
+    const riskDaysWarning = parseInt(formData.get("riskDaysWarning") || "30");
+    const lastPoNumber = parseInt(formData.get("lastPoNumber") || "1000");
+    const syncDraftOrders = formData.get("syncDraftOrders") === "on";
 
-  return { status: "saved" };
+    const dataToSave = { 
+        openaiKey, 
+        riskDaysCritical, 
+        riskDaysWarning, 
+        lastPoNumber, 
+        syncDraftOrders 
+    };
+    console.log("Attempting to save:", dataToSave); // Debug 4
+
+    // This is where it likely crashes
+    const result = await prisma.merchantSettings.upsert({
+      where: { shop: session.shop },
+      update: dataToSave,
+      create: { shop: session.shop, ...dataToSave }
+    });
+
+    console.log("--- SAVE SUCCESSFUL ---"); // Debug 5
+    return { status: "saved" };
+
+  } catch (error) {
+    console.error("!!! SAVE FAILED !!!");
+    console.error(error); // This will print the REAL error
+    return { status: "error", error: error.message };
+  }
 };
 
 export const loader = async ({ request }) => {
