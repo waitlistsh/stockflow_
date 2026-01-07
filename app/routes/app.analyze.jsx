@@ -1,6 +1,6 @@
 // app/routes/app.analyze.jsx
 import { useState, useCallback, useEffect } from "react";
-import { useLoaderData, useNavigation, useFetcher, useNavigate } from "react-router";
+import { useLoaderData, useNavigation, useFetcher, useNavigate, useLocation } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { syncProducts, syncOrders } from "../services/inventory.server"; 
@@ -14,6 +14,8 @@ import {
 import { RefreshIcon, SettingsIcon, PinIcon, PageDownIcon, DiscountIcon } from "@shopify/polaris-icons"; 
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 
+// --- HELPER COMPONENTS & FUNCTIONS ---
+
 function EditableCell({ value: initialValue, onSave }) {
   const [value, setValue] = useState(initialValue);
 
@@ -24,7 +26,7 @@ function EditableCell({ value: initialValue, onSave }) {
   const handleChange = useCallback((newValue) => setValue(newValue), []);
   
   const handleBlur = useCallback(() => {
-    if (value !== initialValue) {
+    if (String(value) !== String(initialValue)) {
       onSave(value);
     }
   }, [value, initialValue, onSave]);
@@ -62,8 +64,7 @@ const getSparklineData = (salesHistory) => {
   return data;
 };
 
-
-// --- ACTION ---
+// --- BACKEND ACTION HANDLER ---
 export const action = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -72,18 +73,18 @@ export const action = async ({ request }) => {
   if (intent === "sync") {
     await syncProducts(admin, session.shop);
     await syncOrders(admin);
-    await prisma.merchantSettings.upsert({ where: { shop: session.shop }, update: { lastSyncedAt: new Date() }, create: { shop: session.shop, lastSyncedAt: new Date() } });
+    await prisma.merchantSettings.upsert({ 
+      where: { shop: session.shop }, 
+      update: { lastSyncedAt: new Date() }, 
+      create: { shop: session.shop, lastSyncedAt: new Date() } 
+    });
     return { status: "synced" };
   }
 
-  // UPDATED: Create PO internally
   if (intent === "create_po") {
     const itemsJson = formData.get("items");
     const items = JSON.parse(itemsJson);
-    
-    // Create DB records
     await createPurchaseOrders(session.shop, items);
-    
     return { status: "po_created" };
   }
 
@@ -105,8 +106,7 @@ export const action = async ({ request }) => {
   return null;
 };
 
-
-// --- LOADER ---
+// --- BACKEND LOADER ---
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
@@ -171,7 +171,7 @@ export const loader = async ({ request }) => {
       runway,
       statusLabel,
       suggestedOrderQty, 
-      vendor: item.vendor, // Ensure vendor is passed
+      vendor: item.vendor,
       sparkline: getSparklineData(item.sales)
     };
   });
@@ -216,29 +216,28 @@ export const loader = async ({ request }) => {
   };
 };
 
+// --- MAIN REACT COMPONENT ---
 export default function ProfessionalAnalysis() {
   const { stats, items, aiReport, settings, shopHandle } = useLoaderData();
   const fetcher = useFetcher();
   const navigate = useNavigate(); 
   const navigation = useNavigation(); 
+  const location = useLocation(); // <--- FIXED: Initialized here
+
   const isSyncing = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "sync";
   const isLoading = navigation.state === "loading" && !isSyncing;
 
-
-  // --- REVIEW MODAL STATE ---
+  // State
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [reviewItems, setReviewItems] = useState([]);
-
-  // Filter/Sort State
   const [queryValue, setQueryValue] = useState("");
   const [selectedStatus, setSelectedStatus] = useState([]);
   const [sortSelected, setSortSelected] = useState(["runway desc"]);
 
   // --- HANDLERS ---
-  
+
   // 1. Initial Click: Prepare data and Open Modal
   const handleReviewClick = (itemsToReview) => {
-    // Map items to a clean structure for the modal
     const cleanItems = itemsToReview.map(i => ({
         id: i.id,
         sku: i.sku,
@@ -270,19 +269,23 @@ export default function ProfessionalAnalysis() {
   // 4. Success Listener
   useEffect(() => {
     if (fetcher.state === "idle" && fetcher.data?.status === "po_created") {
-        // Safe check for window.shopify to prevent crash
         if (window.shopify?.toast) {
             window.shopify.toast.show("Purchase Orders Created");
-        } else {
-            console.log("Purchase Orders Created");
         }
-        
-        // Redirect to the new PO Dashboard
-        navigate("/app/purchase_orders" + window.location.search);
+        navigate("/app/purchase_orders" + location.search);
     }
-  }, [fetcher.state, fetcher.data, navigate]);
+  }, [fetcher.state, fetcher.data, navigate, location.search]);
 
+  // Update item handler
+  const handleUpdateItem = (id, field, value) => {
+    const formData = new FormData();
+    formData.append("intent", "update_item");
+    formData.append("itemId", id);
+    formData.append(field, value);
+    fetcher.submit(formData, { method: "POST" });
+  };
 
+  // Filters & Sorting Logic
   const handleQueryValueChange = useCallback((value) => setQueryValue(value), []);
   const handleStatusChange = useCallback((value) => setSelectedStatus(value), []);
   const handleQueryValueRemove = useCallback(() => setQueryValue(""), []);
@@ -341,13 +344,12 @@ export default function ProfessionalAnalysis() {
   const resourceName = { singular: 'product', plural: 'products' };
   const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(sortedItems);
 
-  // --- FIXED BULK ACTIONS ---
+  // Bulk Actions
   const promotedBulkActions = [
     {
       content: 'Generate PO for Selected',
       onAction: () => {
         const selectedItems = sortedItems.filter(item => selectedResources.includes(item.id));
-        // FIX: Use handleReviewClick instead of handleGeneratePO
         handleReviewClick(selectedItems); 
       },
     },
@@ -386,14 +388,6 @@ export default function ProfessionalAnalysis() {
     });
   }
 
-  const handleUpdateItem = (id, field, value) => {
-    const formData = new FormData();
-    formData.append("intent", "update_item");
-    formData.append("itemId", id);
-    formData.append(field, value);
-    fetcher.submit(formData, { method: "POST" });
-  };
-
   const getStatusBadge = (item) => {
     if (item.statusLabel === "Out of Stock") return <Badge tone="critical">Out of Stock</Badge>;
     if (item.statusLabel === "Critical") return <Badge tone="critical">{Math.floor(item.runway)} Days</Badge>;
@@ -402,18 +396,7 @@ export default function ProfessionalAnalysis() {
     return <Badge tone="success">Healthy</Badge>;
   };
 
-  if (!settings.hasKey) {
-    return (
-      <Page title="Inventory Report">
-        <Banner tone="warning" title="Setup Required">Please add your OpenAI API Key.</Banner>
-      </Page>
-    );
-  }
-
-  if (isLoading) {
-    return <Page fullWidth><div style={{height:'60vh', display:'flex', justifyContent:'center', alignItems:'center'}}><Spinner size="large" /></div></Page>;
-  }
-
+  // Row Markup
   const rowMarkup = sortedItems.map((item, index) => (
     <IndexTable.Row id={item.id} key={item.id} position={index} selected={selectedResources.includes(item.id)}>
       <IndexTable.Cell>
@@ -466,20 +449,17 @@ export default function ProfessionalAnalysis() {
 
       <IndexTable.Cell>
         <ButtonGroup>
-          {/* FIX: Individual Button triggers the Modal now */}
           <Tooltip content={`Generate PO for ${item.title}`}>
             <Button 
               icon={PageDownIcon} 
               variant="plain" 
               onClick={(e) => {
                 e.stopPropagation();
-                // Open the modal for this single item
                 handleReviewClick([item]);
               }} 
             />
           </Tooltip>
 
-          {/* Discount Button for Dead Stock */}
           {item.statusLabel === "Dead Stock" && (
              <Tooltip content="Create Liquidation Discount">
                <Button 
@@ -498,6 +478,21 @@ export default function ProfessionalAnalysis() {
 
   const lastSynced = settings.lastSyncedAt ? new Date(settings.lastSyncedAt).toLocaleString() : "Never";
 
+  // Loading State
+  if (isLoading) {
+    return <Page fullWidth><div style={{height:'60vh', display:'flex', justifyContent:'center', alignItems:'center'}}><Spinner size="large" /></div></Page>;
+  }
+
+  // Key Warning State
+  if (!settings.hasKey) {
+    return (
+      <Page title="Inventory Report">
+        <Banner tone="warning" title="Setup Required">Please add your OpenAI API Key in Settings.</Banner>
+      </Page>
+    );
+  }
+
+  // --- FINAL RENDER ---
   return (
     <Page 
       title="Strategic Inventory Report" 
@@ -509,28 +504,28 @@ export default function ProfessionalAnalysis() {
         loading: isSyncing,
       }}
       secondaryActions={[
-      {
-        content: "Dashboard",
-        onAction: () => navigate("/app" + window.location.search),
-      },
-      {
-        content: "Inventory Analysis",
-        onAction: () => navigate("/app/analyze" + window.location.search),
-      },
-      {
-        content: "Supplier Management",
-        onAction: () => navigate("/app/suppliers" + window.location.search),
-      },
-      {
-        content: "Purchase Orders",
-        onAction: () => navigate("/app/purchase_orders" + window.location.search),
-      },
-      {
-        content: "Settings",
-        icon: SettingsIcon,
-        onAction: () => navigate("/app/settings" + window.location.search),
-      },
-    ]}
+        {
+          content: "Dashboard",
+          url: "/app" + location.search,
+        },
+        {
+          content: "Inventory Analysis",
+          url: "/app/analyze" + location.search,
+        },
+        {
+          content: "Supplier Management",
+          url: "/app/suppliers" + location.search,
+        },
+        {
+          content: "Purchase Orders",
+          url: "/app/purchase_orders" + location.search,
+        },
+        {
+          content: "Settings",
+          icon: SettingsIcon,
+          url: "/app/settings" + location.search,
+        },
+      ]}
     >
       <BlockStack gap="500">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 1rem' }}>
@@ -609,7 +604,7 @@ export default function ProfessionalAnalysis() {
         </Layout>
       </BlockStack>
 
-      {/* --- ADDED: THE MISSING MODAL --- */}
+      {/* --- REVIEW PURCHASE ORDER MODAL --- */}
       {isReviewOpen && (
         <Modal
           open={true}
@@ -649,12 +644,12 @@ export default function ProfessionalAnalysis() {
                   <IndexTable.Cell>{item.title}</IndexTable.Cell>
                   <IndexTable.Cell>${item.cost}</IndexTable.Cell>
                   <IndexTable.Cell>
-                     <TextField 
-                       type="number" 
-                       value={String(item.quantity)} 
-                       onChange={(val) => handleReviewItemChange(index, val)}
-                       autoComplete="off"
-                     />
+                      <TextField 
+                        type="number" 
+                        value={String(item.quantity)} 
+                        onChange={(val) => handleReviewItemChange(index, val)}
+                        autoComplete="off"
+                      />
                   </IndexTable.Cell>
                 </IndexTable.Row>
               ))}

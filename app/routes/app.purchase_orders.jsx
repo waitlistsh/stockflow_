@@ -178,8 +178,25 @@ export default function PurchaseOrders() {
           }}
           secondaryActions={[
             {
-              content: 'Cancel',
-              onAction: handleCloseModal,
+              content: "Dashboard",
+              url: "/app" + location.search, // Use 'url' instead of 'onAction'
+            },
+            {
+              content: "Inventory Analysis",
+              url: "/app/analyze" + location.search,
+            },
+            {
+              content: "Supplier Management",
+              url: "/app/suppliers" + location.search,
+            },
+            {
+              content: "Purchase Orders",
+              url: "/app/purchase_orders" + location.search,
+            },
+            {
+              content: "Settings",
+              icon: SettingsIcon,
+              url: "/app/settings" + location.search,
             },
           ]}
           large

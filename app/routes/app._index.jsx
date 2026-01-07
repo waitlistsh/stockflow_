@@ -237,24 +237,24 @@ export default function Index() {
     secondaryActions={[
       {
         content: "Dashboard",
-        onAction: () => navigate("/app" + location.search),
+        url: "/app/_index" + location.search,
       },
       {
         content: "Inventory Analysis",
-        onAction: () => navigate("/app/analyze" + location.search),
+        url: "/app/analyze" + location.search,
       },
       {
         content: "Supplier Management",
-        onAction: () => navigate("/app/suppliers" + location.search),
+       url: "/app/suppliers" + location.search,
       },
       {
         content: "Purchase Orders",
-        onAction: () => navigate("/app/purchase_orders" + location.search),
+        url: "/app/purchase_orders" + location.search,
       },
       {
         content: "Settings",
         icon: SettingsIcon,
-        onAction: () => navigate("/app/settings" + location.search),
+        url: "/app/settings" + location.search,
       },
     ]}
   >

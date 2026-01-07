@@ -1,9 +1,9 @@
 // app/routes/app.suppliers.jsx
 import { useEffect } from "react";
-import { useLoaderData, useNavigate, useFetcher } from "react-router";
+import { useLoaderData, useNavigate, useFetcher, useLocation } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
-import { syncSuppliers } from "../services/inventory.server"; // Make sure this function exists
+import { syncSuppliers } from "../services/inventory.server"; 
 import {
   Page, Layout, Card, IndexTable, Text, Button, Banner
 } from "@shopify/polaris";
@@ -31,9 +31,7 @@ export const action = async ({ request }) => {
     return { status: "created", id: supplier.id };
   }
 
-  // --- NEW: Import Vendors from Shopify ---
   if (intent === "import_shopify") {
-    // Ensure you have added the syncSuppliers function to app/services/inventory.server.js
     const count = await syncSuppliers(admin, session.shop);
     return { status: "imported", count };
   }
@@ -45,6 +43,7 @@ export default function Suppliers() {
   const { suppliers } = useLoaderData();
   const navigate = useNavigate();
   const fetcher = useFetcher();
+  const location = useLocation(); 
 
   const handleCreate = () => {
     fetcher.submit({ intent: "create" }, { method: "POST" });
@@ -56,23 +55,19 @@ export default function Suppliers() {
   
   useEffect(() => {
     if (fetcher.data?.status === "created") {
-      navigate(`/app/supplier/${fetcher.data.id}` + window.location.search);
+      navigate(`/app/supplier/${fetcher.data.id}${location.search}`);
     }
-    if (fetcher.data?.status === "imported") {
-      // --- ADD SAFETY CHECK HERE ---
-      if (window.shopify?.toast) {
-        window.shopify.toast.show(`Imported ${fetcher.data.count} vendors`);
-      } else {
-        console.log(`Imported ${fetcher.data.count} vendors`);
-      }
+    if (fetcher.data?.status === "imported" && window.shopify?.toast) {
+      window.shopify.toast.show(`Imported ${fetcher.data.count} vendors`);
     }
-  }, [fetcher.data, navigate]);
+  }, [fetcher.data, navigate, location.search]);
+
   const rowMarkup = suppliers.map((supplier, index) => (
     <IndexTable.Row 
       id={supplier.id} 
       key={supplier.id} 
       position={index}
-      onClick={() => navigate(`/app/supplier/${supplier.id}` + window.location.search)} 
+      onClick={() => navigate(`/app/supplier/${supplier.id}${location.search}`)} 
     >
       <IndexTable.Cell>
         <Text fontWeight="bold" as="span">{supplier.name}</Text>
@@ -88,12 +83,16 @@ export default function Suppliers() {
     <Page 
       title="Supplier Database"
       primaryAction={
-        <Button variant="primary" icon={PlusIcon} onClick={handleCreate} loading={fetcher.state === "submitting"}>
+        <Button 
+          variant="primary" 
+          icon={PlusIcon} 
+          onClick={handleCreate} 
+          loading={fetcher.state === "submitting" && fetcher.formData?.get("intent") === "create"}
+        >
           Add Supplier
         </Button>
       }
       secondaryActions={[
-        // --- NEW BUTTON ---
         {
           content: "Import from Shopify",
           icon: ImportIcon,
@@ -102,16 +101,24 @@ export default function Suppliers() {
         },
         {
           content: "Dashboard",
-          onAction: () => navigate("/app" + window.location.search),
+          url: "/app" + location.search,
         },
         {
           content: "Inventory Analysis",
-          onAction: () => navigate("/app/analyze" + window.location.search),
+          url: "/app/analyze" + location.search,
+        },
+        {
+          content: "Supplier Management",
+          url: "/app/suppliers" + location.search,
+        },
+        {
+          content: "Purchase Orders",
+          url: "/app/purchase_orders" + location.search,
         },
         {
           content: "Settings",
           icon: SettingsIcon,
-          onAction: () => navigate("/app/settings" + window.location.search),
+          url: "/app/settings" + location.search,
         },
       ]}
     >
