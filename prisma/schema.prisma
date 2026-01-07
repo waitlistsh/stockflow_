@@ -68,14 +68,27 @@ model DailySales {
   @@index([variantId, date]) 
 }
 
-model MerchantSettings {
-  shop             String @id
-  openaiKey        String?
-  safetyStock      Int     @default(7) 
-  useAI            Boolean @default(false)
-  riskDaysCritical Int     @default(14)
-  riskDaysWarning  Int     @default(30)
-  lastSyncedAt     DateTime?
+model Supplier {
+  id          String   @id @default(uuid())
+  shop        String
+  name        String
+  email       String?
+  contactName String?
+  leadTime    Int      @default(14)
+  items       InventoryItem[]
+  @@unique([shop, name])
+}
+
+// --- NEW MODEL: INTERNAL PO HISTORY ---
+model PurchaseOrder {
+  id          String   @id @default(uuid())
+  shop        String
+  poNumber    Int
+  createdAt   DateTime @default(now())
+  vendor      String
+  totalCost   Float
+  status      String   @default("OPEN") // OPEN, SENT, RECEIVED
+  shopifyDraftId String? // ID if synced to Shopify
 }
 
 model Supplier {

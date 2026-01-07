@@ -5,15 +5,17 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { syncProducts, syncOrders } from "../services/inventory.server"; 
 import OpenAI from "openai";
+// --- CHANGES HERE: Removed direct jsPDF imports, added utility import ---
+import { generatePO } from "../utils/pdfGenerator"; 
 import {
   Page, Layout, Card, Text, BlockStack, Banner, Spinner, Box,
   InlineGrid, Divider, IndexTable, Badge, useIndexResourceState, Tooltip,
-  Filters, ChoiceList, Select, TextField
+  Filters, ChoiceList, Select, TextField, Button, ButtonGroup
 } from "@shopify/polaris";
-import { RefreshIcon, SettingsIcon, PinIcon } from "@shopify/polaris-icons"; 
+import { RefreshIcon, SettingsIcon, PinIcon, PageDownIcon, DiscountIcon } from "@shopify/polaris-icons"; 
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 
-
+// ... (EditableCell component remains the same) ...
 function EditableCell({ value: initialValue, onSave }) {
   const [value, setValue] = useState(initialValue);
 
@@ -24,7 +26,6 @@ function EditableCell({ value: initialValue, onSave }) {
   const handleChange = useCallback((newValue) => setValue(newValue), []);
   
   const handleBlur = useCallback(() => {
-    // Only save if the value actually changed to prevent unnecessary network calls
     if (value !== initialValue) {
       onSave(value);
     }
@@ -45,7 +46,7 @@ function EditableCell({ value: initialValue, onSave }) {
   );
 }
 
-// --- HELPER: Generate Sparkline Data (Last 30 Days) ---
+// ... (getSparklineData remains the same) ...
 const getSparklineData = (salesHistory) => {
   const data = [];
   const today = new Date();
@@ -54,7 +55,6 @@ const getSparklineData = (salesHistory) => {
     date.setDate(today.getDate() - i);
     date.setHours(0, 0, 0, 0);
     
-    // Find sale for this specific day
     const sale = salesHistory.find(s => {
       const sDate = new Date(s.date);
       return sDate.toDateString() === date.toDateString();
@@ -65,13 +65,12 @@ const getSparklineData = (salesHistory) => {
   return data;
 };
 
-// --- ACTION: Handle Sync, Pinning & Updates ---
+// ... (action and loader remain the same) ...
 export const action = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // 1. SYNC DATA
   if (intent === "sync") {
     await syncProducts(admin, session.shop);
     await syncOrders(admin);
@@ -84,11 +83,18 @@ export const action = async ({ request }) => {
     return { status: "synced" };
   }
 
-  // 2. PIN/UNPIN ITEM
+  if (intent === "generate_po_numbers") {
+    const itemsJson = formData.get("items");
+    const items = JSON.parse(itemsJson);
+  
+    const poMap = await createPurchaseOrders(admin, session.shop, items);
+    
+    return { status: "po_generated", poMap };
+  }
+
   if (intent === "pin") {
     const itemId = formData.get("itemId");
     const currentStatus = formData.get("currentStatus") === "true";
-    
     await prisma.inventoryItem.update({
       where: { id: itemId },
       data: { isPinned: !currentStatus }
@@ -96,15 +102,12 @@ export const action = async ({ request }) => {
     return { status: "pinned" };
   }
 
-  // 3. UPDATE ITEM (Target Days)
   if (intent === "update_item") {
     const itemId = formData.get("itemId");
     const updates = {};
-    
     if (formData.has("targetDays")) {
       updates.targetDays = parseInt(formData.get("targetDays"));
     }
-
     if (Object.keys(updates).length > 0) {
       await prisma.inventoryItem.update({
         where: { id: itemId },
@@ -127,7 +130,6 @@ export const loader = async ({ request }) => {
   const riskCritical = settings?.riskDaysCritical || 14;
   const riskWarning = settings?.riskDaysWarning || 30;
 
-  // 1. Fetch ALL Inventory
   const items = await prisma.inventoryItem.findMany({
     include: {
       sales: {
@@ -140,7 +142,6 @@ export const loader = async ({ request }) => {
     ]
   });
 
-  // 2. Calculate Aggregate KPIs
   let totalStockValue = 0;
   let totalItems = items.length;
   let outOfStockCount = 0;
@@ -153,6 +154,7 @@ export const loader = async ({ request }) => {
     if (item.inventory <= 0) outOfStockCount++;
     
     const totalSold = item.sales.reduce((acc, s) => acc + s.quantitySold, 0);
+    const revenue30Days = item.sales.reduce((acc, s) => acc + (s.quantitySold * item.price), 0);
     const velocity = totalSold / 30; 
     
     let runway;
@@ -162,19 +164,7 @@ export const loader = async ({ request }) => {
       runway = velocity > 0 ? item.inventory / velocity : 999;
     }
 
-    // Still calculating forecastDate for sorting/logic if needed, but won't display it
-    let forecastDate = "Indefinite";
-    if (item.inventory <= 0) {
-      forecastDate = "Out of Stock";
-    } else if (velocity > 0) {
-      const today = new Date();
-      const targetDate = new Date(today);
-      targetDate.setDate(today.getDate() + runway);
-      
-      forecastDate = targetDate.toLocaleDateString('en-US', { 
-        month: 'short', day: 'numeric', year: 'numeric' 
-      });
-    }
+    const suggestedOrderQty = Math.max(0, Math.ceil((item.targetDays * velocity) - item.inventory));
 
     if (runway < riskCritical && item.inventory > 0) highRiskCount++;
 
@@ -182,13 +172,19 @@ export const loader = async ({ request }) => {
     if (item.inventory <= 0) statusLabel = "Out of Stock";
     else if (runway < riskCritical) statusLabel = "Critical";
     else if (runway < riskWarning) statusLabel = "Warning";
+    
+    if (runway > 180 && revenue30Days < 100) {
+      statusLabel = "Dead Stock";
+    }
 
     return {
       ...item,
       velocity,
+      revenue30Days,
       runway,
-      forecastDate,
       statusLabel,
+      suggestedOrderQty, 
+      vendor: item.vendor, // Ensure vendor is passed
       sparkline: getSparklineData(item.sales)
     };
   });
@@ -202,30 +198,28 @@ export const loader = async ({ request }) => {
         Act as a Senior Inventory Manager. Analyze this store's status:
         - Total SKUs: ${totalItems}
         - Stockouts: ${outOfStockCount}
-        - High Risk (Low Stock): ${highRiskCount} (Threshold: <${riskCritical} days)
+        - High Risk: ${highRiskCount}
         - Total Inventory Cost: $${totalStockValue.toFixed(2)}
-        - Potential Revenue: $${potentialRevenue.toFixed(2)}
         
-        Provide a "Professional Management Summary" (max 3 sentences) focusing on capital efficiency and immediate risks. 
-        Do not use markdown.
+        Provide a "Professional Management Summary" (max 3 sentences) focusing on capital efficiency and immediate risks.
       `;
-
       const completion = await openai.chat.completions.create({
         messages: [{ role: "user", content: prompt }],
         model: "gpt-3.5-turbo",
       });
-      
       aiReport = completion.choices[0].message.content;
     } catch (err) {
-      console.error(err);
       aiReport = "Error generating AI report.";
     }
   }
+
+  const shopHandle = session.shop.replace('.myshopify.com', '');
 
   return { 
     stats: { totalItems, outOfStockCount, totalStockValue, highRiskCount },
     items: enrichedItems,
     aiReport,
+    shopHandle,
     settings: { 
       hasKey: !!settings?.openaiKey,
       lastSyncedAt: settings?.lastSyncedAt,
@@ -236,7 +230,7 @@ export const loader = async ({ request }) => {
 };
 
 export default function ProfessionalAnalysis() {
-  const { stats, items, aiReport, settings } = useLoaderData();
+  const { stats, items, aiReport, settings, shopHandle } = useLoaderData();
   const navigation = useNavigation();
   const fetcher = useFetcher();
   const navigate = useNavigate(); 
@@ -247,6 +241,32 @@ export default function ProfessionalAnalysis() {
   const [queryValue, setQueryValue] = useState("");
   const [selectedStatus, setSelectedStatus] = useState([]);
   const [sortSelected, setSortSelected] = useState(["runway desc"]);
+
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.status === "po_generated") {
+      const { poMap } = fetcher.data; // e.g. { "Nike": "PO-1002" }
+      const itemsToPrint = JSON.parse(fetcher.formData.get("items"));
+      
+      // Inject the generated PO Number into the item objects for the PDF generator
+      const itemsWithPoNumbers = itemsToPrint.map(item => ({
+        ...item,
+        poNumber: poMap[item.vendor] || "PENDING"
+      }));
+
+      generatePO(itemsWithPoNumbers, { shopHandle });
+      shopify.toast.show("Purchase Orders Created & Synced!");
+    }
+  }, [fetcher.state, fetcher.data, shopHandle]);
+
+  const handleGeneratePO = (selectedItemsList) => {
+    // Send items to backend to generate Numbers & Sync to Shopify
+    const formData = new FormData();
+    formData.append("intent", "generate_po_numbers");
+    formData.append("items", JSON.stringify(selectedItemsList));
+    fetcher.submit(formData, { method: "POST" });
+  };
+
+  // --- CHANGE HERE: PDF Logic moved to utility file ---
 
   const handleQueryValueChange = useCallback((value) => setQueryValue(value), []);
   const handleStatusChange = useCallback((value) => setSelectedStatus(value), []);
@@ -264,7 +284,8 @@ export default function ProfessionalAnalysis() {
       2: 'targetDays', 
       3: 'inventory',
       5: 'velocity',
-      6: 'runway' 
+      6: 'runway',
+      7: 'suggestedOrderQty'
     };
     const key = mapping[headingIndex];
     if (key) {
@@ -277,9 +298,8 @@ export default function ProfessionalAnalysis() {
   const sortOptions = [
     {label: 'Health: High to Low', value: 'runway desc'},
     {label: 'Health: Low to High', value: 'runway asc'},
+    {label: 'Order Qty: High to Low', value: 'suggestedOrderQty desc'},
     {label: 'Inventory: High to Low', value: 'inventory desc'},
-    {label: 'Inventory: Low to High', value: 'inventory asc'},
-    {label: 'Velocity: High to Low', value: 'velocity desc'},
   ];
 
   const filteredItems = items.filter((item) => {
@@ -306,19 +326,31 @@ export default function ProfessionalAnalysis() {
   const resourceName = { singular: 'product', plural: 'products' };
   const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(sortedItems);
 
+  // --- CHANGE HERE: BULK ACTIONS uses external utility ---
+ const promotedBulkActions = [
+    {
+      content: 'Generate PO for Selected',
+      onAction: () => {
+        const selectedItems = sortedItems.filter(item => selectedResources.includes(item.id));
+        handleGeneratePO(selectedItems); 
+      },
+    },
+  ];
+
   const filters = [
     {
       key: 'status',
-      label: 'Health Status',
+      label: 'Status',
       filter: (
         <ChoiceList
-          title="Health Status"
+          title="Status"
           titleHidden
           choices={[
             { label: 'Out of Stock', value: 'Out of Stock' },
             { label: 'Critical Risk', value: 'Critical' },
             { label: 'Warning', value: 'Warning' },
             { label: 'Healthy', value: 'Healthy' },
+            { label: 'Dead Stock (>180d, <$100)', value: 'Dead Stock' },
           ]}
           selected={selectedStatus}
           onChange={handleStatusChange}
@@ -338,7 +370,6 @@ export default function ProfessionalAnalysis() {
     });
   }
 
-  // --- HELPER: Update Item via Fetcher ---
   const handleUpdateItem = (id, field, value) => {
     const formData = new FormData();
     formData.append("intent", "update_item");
@@ -349,29 +380,22 @@ export default function ProfessionalAnalysis() {
 
   const getStatusBadge = (item) => {
     if (item.statusLabel === "Out of Stock") return <Badge tone="critical">Out of Stock</Badge>;
-    if (item.statusLabel === "Critical") return <Badge tone="critical">{Math.floor(item.runway)} Days (Critical)</Badge>;
-    if (item.statusLabel === "Warning") return <Badge tone="attention">{Math.floor(item.runway)} Days (Warning)</Badge>;
+    if (item.statusLabel === "Critical") return <Badge tone="critical">{Math.floor(item.runway)} Days</Badge>;
+    if (item.statusLabel === "Warning") return <Badge tone="attention">{Math.floor(item.runway)} Days</Badge>;
+    if (item.statusLabel === "Dead Stock") return <Badge tone="new">Dead Stock</Badge>;
     return <Badge tone="success">Healthy</Badge>;
   };
 
   if (!settings.hasKey) {
     return (
       <Page title="Inventory Report">
-        <Banner tone="warning" title="Setup Required">
-          Please add your OpenAI API Key in Settings to generate the Executive Report.
-        </Banner>
+        <Banner tone="warning" title="Setup Required">Please add your OpenAI API Key.</Banner>
       </Page>
     );
   }
 
   if (isLoading) {
-    return (
-      <Page fullWidth>
-        <div style={{height: '60vh', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
-           <Spinner size="large" accessibilityLabel="Generating Report" />
-        </div>
-      </Page>
-    );
+    return <Page fullWidth><div style={{height:'60vh', display:'flex', justifyContent:'center', alignItems:'center'}}><Spinner size="large" /></div></Page>;
   }
 
   const rowMarkup = sortedItems.map((item, index) => (
@@ -384,34 +408,23 @@ export default function ProfessionalAnalysis() {
                 e.stopPropagation(); 
                 fetcher.submit({ intent: "pin", itemId: item.id, currentStatus: item.isPinned }, { method: "POST" });
               }}
-              style={{ 
-                background: 'none', border: 'none', cursor: 'pointer', 
-                color: item.isPinned ? '#008060' : '#babfc3',
-                display: 'flex', alignItems: 'center'
-              }}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: item.isPinned ? '#008060' : '#babfc3', display: 'flex', alignItems: 'center' }}
             >
               <PinIcon width={20} />
             </button>
           </Tooltip>
-          
           <BlockStack gap="050">
              <Text variant="bodyMd" fontWeight="bold">{item.title}</Text>
              <Text variant="bodySm" tone="subdued">SKU: {item.sku || 'N/A'}</Text>
+             <Text variant="bodySm" tone="subdued">{item.vendor || 'Unknown Vendor'}</Text>
           </BlockStack>
         </div>
       </IndexTable.Cell>
       
-      {/* COST COLUMN (Read-Only) */}
-      <IndexTable.Cell>
-        <Text variant="bodyMd">${item.cost?.toFixed(2) || '0.00'}</Text>
-      </IndexTable.Cell>
+      <IndexTable.Cell><Text variant="bodyMd">${item.cost?.toFixed(2) || '0.00'}</Text></IndexTable.Cell>
 
-      {/* TARGET DAYS (Editable with Component) */}
       <IndexTable.Cell>
-         <EditableCell 
-            value={item.targetDays} 
-            onSave={(val) => handleUpdateItem(item.id, 'targetDays', val)} 
-         />
+         <EditableCell value={item.targetDays} onSave={(val) => handleUpdateItem(item.id, 'targetDays', val)} />
       </IndexTable.Cell>
 
       <IndexTable.Cell>{item.inventory}</IndexTable.Cell>
@@ -426,35 +439,53 @@ export default function ProfessionalAnalysis() {
         </div>
       </IndexTable.Cell>
 
-      <IndexTable.Cell>
-        <Text variant="bodyMd">{item.velocity.toFixed(1)} /day</Text>
-      </IndexTable.Cell>
-
-      {/* RUNWAY (Simplified Format) */}
-      <IndexTable.Cell>
-         <Text variant="bodyMd" tone={item.runway < settings.riskCritical ? "critical" : "subdued"}>
-           {item.runway === -1 ? "0" : Math.floor(item.runway)} Days
-         </Text>
-      </IndexTable.Cell>
+      <IndexTable.Cell><Text variant="bodyMd">{item.velocity.toFixed(1)} /day</Text></IndexTable.Cell>
+      <IndexTable.Cell>{getStatusBadge(item)}</IndexTable.Cell>
 
       <IndexTable.Cell>
-         {getStatusBadge(item)}
+        <Text variant="bodyMd" fontWeight="bold" tone={item.suggestedOrderQty > 0 ? "critical" : "subdued"}>
+          {item.suggestedOrderQty} units
+        </Text>
+      </IndexTable.Cell>
+
+      <IndexTable.Cell>
+        <ButtonGroup>
+          {/* CHANGE HERE: Individual PO Button uses external utility */}
+          <Tooltip content={`Generate PO for ${item.title}`}>
+            <Button 
+              icon={PageDownIcon} 
+              variant="plain" 
+              onClick={(e) => {
+                e.stopPropagation();
+                // Call utility func
+                generatePO([item], { shopHandle });
+              }} 
+            />
+          </Tooltip>
+
+          {/* Discount Button for Dead Stock */}
+          {item.statusLabel === "Dead Stock" && (
+             <Tooltip content="Create Liquidation Discount">
+               <Button 
+                 icon={DiscountIcon} 
+                 variant="plain" 
+                 tone="critical"
+                 url={`https://admin.shopify.com/store/${shopHandle}/discounts/new`}
+                 target="_blank"
+               />
+             </Tooltip>
+          )}
+        </ButtonGroup>
       </IndexTable.Cell>
     </IndexTable.Row>
   ));
 
-  const lastSynced = settings.lastSyncedAt 
-  ? new Date(settings.lastSyncedAt).toLocaleString() 
-  : "Never";
+  const lastSynced = settings.lastSyncedAt ? new Date(settings.lastSyncedAt).toLocaleString() : "Never";
 
   return (
     <Page 
       title="Strategic Inventory Report" 
       fullWidth
-      backAction={{ 
-        content: "Dashboard", 
-        onAction: () => navigate("/app" + window.location.search) 
-      }}
       primaryAction={{
         content: isSyncing ? 'Syncing...' : 'Sync Data',
         icon: RefreshIcon,
@@ -462,23 +493,10 @@ export default function ProfessionalAnalysis() {
         loading: isSyncing,
       }}
       secondaryActions={[
-        {
-          content: "Dashboard",
-          onAction: () => navigate("/app" + window.location.search),
-        },
-        {
-        content: "Supplier Management",
-        onAction: () => navigate("/app/suppliers" + window.location.search),
-      },
-        {
-          content: "Settings",
-          icon: SettingsIcon,
-          onAction: () => navigate("/app/settings" + window.location.search),
-        },
+        { content: "Settings", icon: SettingsIcon, onAction: () => navigate("/app/settings" + window.location.search) },
       ]}
     >
       <BlockStack gap="500">
-        
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 1rem' }}>
            <Text variant="bodySm" tone="subdued">
              Risk Thresholds: &lt;{settings.riskCritical} days (Critical), &lt;{settings.riskWarning} days (Warning)
@@ -494,35 +512,14 @@ export default function ProfessionalAnalysis() {
               <BlockStack gap="400">
                 <Text variant="headingLg" as="h2">Executive Summary</Text>
                 <Box background="bg-surface-secondary" padding="400" borderRadius="200">
-                  <BlockStack gap="200">
-                    <Text variant="bodyLg" as="p">{aiReport}</Text>
-                    <Text variant="caption" tone="subdued">Powered by OpenAI • {new Date().toLocaleDateString()}</Text>
-                  </BlockStack>
+                  <Text variant="bodyLg" as="p">{aiReport}</Text>
                 </Box>
-
                 <Divider />
-
                 <InlineGrid columns={4} gap="400">
-                  <Box>
-                    <Text variant="headingXs" tone="subdued">TOTAL VALUATION</Text>
-                    <Text variant="headingLg">${stats.totalStockValue.toLocaleString()}</Text>
-                  </Box>
-                  <Box>
-                    <Text variant="headingXs" tone="subdued">STOCKOUTS</Text>
-                    <Text variant="headingLg" tone={stats.outOfStockCount > 0 ? "critical" : "success"}>
-                      {stats.outOfStockCount}
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text variant="headingXs" tone="subdued">HIGH RISK ITEMS</Text>
-                    <Text variant="headingLg" tone={stats.highRiskCount > 5 ? "critical" : "attention"}>
-                      {stats.highRiskCount}
-                    </Text>
-                  </Box>
-                  <Box>
-                    <Text variant="headingXs" tone="subdued">ACTIVE SKUS</Text>
-                    <Text variant="headingLg">{stats.totalItems}</Text>
-                  </Box>
+                  <Box><Text variant="headingXs" tone="subdued">TOTAL VALUATION</Text><Text variant="headingLg">${stats.totalStockValue.toLocaleString()}</Text></Box>
+                  <Box><Text variant="headingXs" tone="subdued">STOCKOUTS</Text><Text variant="headingLg" tone={stats.outOfStockCount > 0 ? "critical" : "success"}>{stats.outOfStockCount}</Text></Box>
+                  <Box><Text variant="headingXs" tone="subdued">HIGH RISK ITEMS</Text><Text variant="headingLg" tone={stats.highRiskCount > 5 ? "critical" : "attention"}>{stats.highRiskCount}</Text></Box>
+                  <Box><Text variant="headingXs" tone="subdued">ACTIVE SKUS</Text><Text variant="headingLg">{stats.totalItems}</Text></Box>
                 </InlineGrid>
               </BlockStack>
             </Card>
@@ -543,15 +540,8 @@ export default function ProfessionalAnalysis() {
                     onClearAll={handleFiltersClearAll}
                   />
                 </div>
-                
                 <div style={{ width: '200px' }}>
-                   <Select
-                     label="Sort by"
-                     labelInline
-                     options={sortOptions}
-                     onChange={handleSortChange}
-                     value={sortSelected[0]}
-                   />
+                   <Select label="Sort by" labelInline options={sortOptions} onChange={handleSortChange} value={sortSelected[0]} />
                 </div>
               </div>
               
@@ -560,7 +550,8 @@ export default function ProfessionalAnalysis() {
                 itemCount={sortedItems.length}
                 selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
                 onSelectionChange={handleSelectionChange}
-                sortable={[true, true, false, true, true, true, true]} 
+                promotedBulkActions={promotedBulkActions}
+                sortable={[true, true, false, true, true, true, true, true]} 
                 sortSelected={sortSelected}
                 onSort={onSort}
                 headings={[
@@ -570,8 +561,9 @@ export default function ProfessionalAnalysis() {
                   { title: 'Stock' },
                   { title: 'Trend' }, 
                   { title: 'Velocity' },
-                  { title: 'Runway' },     
-                  { title: 'Health Status' },
+                  { title: 'Status' },
+                  { title: 'Suggested Order' },
+                  { title: 'Actions' }
                 ]}
               >
                 {rowMarkup}
@@ -579,7 +571,6 @@ export default function ProfessionalAnalysis() {
             </Card>
           </Layout.Section>
         </Layout>
-
       </BlockStack>
     </Page>
   );
