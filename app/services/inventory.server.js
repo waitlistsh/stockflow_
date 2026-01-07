@@ -1,8 +1,8 @@
 // app/services/inventory.server.js
 import prisma from "../db.server";
 
-// --- 1. SYNC PRODUCTS (What you already had) ---
-export async function syncProducts(admin) {
+// --- 1. SYNC PRODUCTS ---
+export async function syncProducts(admin, shop) { // Ensure 'shop' is passed if needed, currently app.analyze passes it
   console.log("📦 Starting Product Sync...");
   
   const response = await admin.graphql(
@@ -13,7 +13,12 @@ export async function syncProducts(admin) {
             id, title
             variants(first: 10) {
               nodes {
-                id, sku, price, inventoryQuantity
+                id, sku, price, inventoryQuantity, title
+                inventoryItem {
+                  unitCost {
+                    amount
+                  }
+                }
               }
             }
           }
@@ -30,21 +35,44 @@ export async function syncProducts(admin) {
       const cleanVariantId = variant.id.split("/").pop(); 
       const cleanProductId = product.id.split("/").pop();
 
+      // --- ROADMAP FIX: Fallback for missing SKU ---
+      let finalSku = variant.sku;
+      if (!finalSku || finalSku === "") {
+        // Fallback: Product Title (plus Variant Title if not default)
+        finalSku = variant.title === "Default Title" 
+          ? product.title 
+          : `${product.title}-${variant.title}`;
+        
+        // Cleanup string (optional)
+        finalSku = finalSku.replace(/\s+/g, '-').toUpperCase();
+      }
+
+      // --- ROADMAP FIX: Cost Price ---
+      // Note: cost might be null in Shopify
+      const importedCost = variant.inventoryItem?.unitCost?.amount 
+        ? parseFloat(variant.inventoryItem.unitCost.amount) 
+        : 0.0;
+
       await prisma.inventoryItem.upsert({
         where: { variantId: cleanVariantId },
         update: {
           inventory: variant.inventoryQuantity,
           price: parseFloat(variant.price),
+          // Only update cost if Shopify has a non-zero value, 
+          // otherwise keep our local value (which might be manually set)
+          ...(importedCost > 0 ? { cost: importedCost } : {}),
           title: `${product.title} - ${variant.sku || ''}`,
+          sku: finalSku, // Save the cleaned/fallback SKU
         },
         create: {
-          shop: "current-shop", // Placeholder
+          shop: shop || "current-shop", 
           productId: cleanProductId,
           variantId: cleanVariantId,
-          sku: variant.sku || "UNKNOWN",
+          sku: finalSku,
           title: `${product.title} - ${variant.sku || ''}`,
           inventory: variant.inventoryQuantity,
           price: parseFloat(variant.price),
+          cost: importedCost, // Initialize with imported cost (or 0)
         },
       });
     }

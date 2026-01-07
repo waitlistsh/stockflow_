@@ -45,10 +45,10 @@ model InventoryItem {
   reorderPoint Int     @default(5) 
   sales       DailySales[] 
   overrideVelocity Float?
-
-  // --- NEW FIELD FOR PINNING ---
   isPinned    Boolean  @default(false)
+  targetDays  Int      @default(30) 
 }
+
 
 model DailySales {
   id            String        @id @default(uuid())

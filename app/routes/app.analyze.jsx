@@ -8,7 +8,7 @@ import OpenAI from "openai";
 import {
   Page, Layout, Card, Text, BlockStack, Banner, Spinner, Box,
   InlineGrid, Divider, IndexTable, Badge, useIndexResourceState, Tooltip,
-  Filters, ChoiceList, Select
+  Filters, ChoiceList, Select, TextField
 } from "@shopify/polaris";
 import { RefreshIcon, SettingsIcon, PinIcon } from "@shopify/polaris-icons"; 
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
@@ -33,7 +33,7 @@ const getSparklineData = (salesHistory) => {
   return data;
 };
 
-// --- ACTION: Handle Sync & Pinning ---
+// --- ACTION: Handle Sync, Pinning & Updates ---
 export const action = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -65,6 +65,27 @@ export const action = async ({ request }) => {
     });
     return { status: "pinned" };
   }
+
+  // 3. UPDATE ITEM (Cost or Target Days)
+  if (intent === "update_item") {
+    const itemId = formData.get("itemId");
+    const updates = {};
+    
+    if (formData.has("cost")) {
+      updates.cost = parseFloat(formData.get("cost"));
+    }
+    if (formData.has("targetDays")) {
+      updates.targetDays = parseInt(formData.get("targetDays"));
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await prisma.inventoryItem.update({
+        where: { id: itemId },
+        data: updates
+      });
+    }
+    return { status: "updated" };
+  }
   
   return null;
 };
@@ -89,7 +110,7 @@ export const loader = async ({ request }) => {
     },
     orderBy: [
       { isPinned: 'desc' }, // Pinned items appear first
-      { inventory: 'desc' } // CHANGED: High inventory (likely healthier) first by default
+      { inventory: 'desc' } 
     ]
   });
 
@@ -209,7 +230,6 @@ export default function ProfessionalAnalysis() {
   // --- 1. STATE ---
   const [queryValue, setQueryValue] = useState("");
   const [selectedStatus, setSelectedStatus] = useState([]);
-  // CHANGED: Default sort to High Runway (Healthy) -> Low Runway (Critical) -> OOS
   const [sortSelected, setSortSelected] = useState(["runway desc"]);
 
   // --- 2. HANDLERS ---
@@ -223,12 +243,14 @@ export default function ProfessionalAnalysis() {
   }, [handleQueryValueRemove, handleStatusRemove]);
 
   const onSort = useCallback((headingIndex, direction) => {
+    // Adjusted mapping for new columns
     const mapping = {
       0: 'title',
-      1: 'inventory',
-      3: 'velocity',
-      4: 'forecastDate', 
-      5: 'runway' 
+      1: 'cost',       // New
+      2: 'targetDays', // New
+      3: 'inventory',
+      5: 'velocity',
+      6: 'runway' 
     };
     const key = mapping[headingIndex];
     if (key) {
@@ -309,6 +331,15 @@ export default function ProfessionalAnalysis() {
     });
   }
 
+  // --- HELPER: Update Item via Fetcher ---
+  const handleUpdateItem = (id, field, value) => {
+    const formData = new FormData();
+    formData.append("intent", "update_item");
+    formData.append("itemId", id);
+    formData.append(field, value);
+    fetcher.submit(formData, { method: "POST" });
+  };
+
   // --- HELPER: Dynamic Status Badge ---
   const getStatusBadge = (item) => {
     if (item.statusLabel === "Out of Stock") return <Badge tone="critical">Out of Stock</Badge>;
@@ -366,6 +397,41 @@ export default function ProfessionalAnalysis() {
         </div>
       </IndexTable.Cell>
       
+      {/* COST COLUMN (Editable if 0, otherwise Read-only) */}
+      <IndexTable.Cell>
+        {item.cost > 0 ? (
+          <Text variant="bodyMd">${item.cost.toFixed(2)}</Text>
+        ) : (
+          <div style={{ width: '80px' }} onClick={(e) => e.stopPropagation()}>
+             <TextField
+               type="number"
+               value={item.cost === 0 ? "" : item.cost}
+               placeholder="$0.00"
+               autoComplete="off"
+               onBlur={(e) => handleUpdateItem(item.id, 'cost', e.target.value)}
+               onChange={() => {}}
+               label="Cost"
+               labelHidden
+             />
+          </div>
+        )}
+      </IndexTable.Cell>
+
+      {/* TARGET DAYS (Editable) */}
+      <IndexTable.Cell>
+         <div style={{ width: '70px' }} onClick={(e) => e.stopPropagation()}>
+            <TextField
+              type="number"
+              value={item.targetDays?.toString()}
+              autoComplete="off"
+              onBlur={(e) => handleUpdateItem(item.id, 'targetDays', e.target.value)}
+              onChange={() => {}}
+              label="Target Days"
+              labelHidden
+            />
+         </div>
+      </IndexTable.Cell>
+
       <IndexTable.Cell>{item.inventory}</IndexTable.Cell>
       
       {/* SPARKLINE CELL */}
@@ -389,10 +455,10 @@ export default function ProfessionalAnalysis() {
         <Text variant="bodyMd">{item.velocity.toFixed(1)} /day</Text>
       </IndexTable.Cell>
 
-      {/* PREDICTIVE ANALYTICS CELL */}
+      {/* READ-ONLY RUNWAY (Calculated) */}
       <IndexTable.Cell>
          <Text variant="bodyMd" tone={item.runway < settings.riskCritical ? "critical" : "subdued"}>
-           {item.forecastDate}
+           {item.forecastDate} ({item.runway === -1 ? "0" : Math.floor(item.runway)} days)
          </Text>
       </IndexTable.Cell>
 
@@ -522,15 +588,17 @@ export default function ProfessionalAnalysis() {
                 itemCount={sortedItems.length}
                 selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
                 onSelectionChange={handleSelectionChange}
-                sortable={[true, true, false, true, true, true]} 
+                sortable={[true, true, false, true, true, true, true]} 
                 sortSelected={sortSelected}
                 onSort={onSort}
                 headings={[
                   { title: 'Product' },
+                  { title: 'Cost' },       // NEW
+                  { title: 'Target Days' }, // NEW
                   { title: 'Stock' },
                   { title: 'Trend' }, 
                   { title: 'Velocity' },
-                  { title: 'Stockout Date' },
+                  { title: 'Runway' },     // READ-ONLY
                   { title: 'Health Status' },
                 ]}
               >
