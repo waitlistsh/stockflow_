@@ -1,0 +1,35 @@
+# shopify.app.toml
+
+client_id = "0dfdf8be819964ce1953f58becf7397a"
+name = "Stockflow"
+application_url = "https://stockflow-ziaq.onrender.com"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+
+[access_scopes]
+
+scopes = "read_orders,write_products,read_locations,write_inventory"
+
+[auth]
+redirect_urls = [
+  "https://stockflow-ziaq.onrender.com/auth/callback",
+  "https://stockflow-ziaq.onrender.com/auth/shopify/callback",
+  "https://stockflow-ziaq.onrender.com/api/auth/callback"
+]
+
+[webhooks]
+api_version = "2026-04"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/scopes_update" ]
+  uri = "/webhooks/app/scopes_update"
+
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
+  [[webhooks.subscriptions]]
+  topics = [ "orders/create" ]
+  uri = "/webhooks/orders/create"
