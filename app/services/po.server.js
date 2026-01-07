@@ -82,3 +82,38 @@ export async function updatePurchaseOrder(id, items) {
         data: { items: items, totalCost: totalCost }
     });
 }
+
+
+export async function receivePurchaseOrder(admin, shop, poId) {
+  // 1. Fetch the PO to get the items
+  const po = await prisma.purchaseOrder.findUnique({
+    where: { id: poId }
+  });
+
+  if (!po || po.status === "RECEIVED") return;
+
+  // 2. Update each item's inventory in your database
+  for (const item of po.items) {
+    // We match by SKU or Title to find the item in your InventoryItem table
+    await prisma.inventoryItem.updateMany({
+      where: { 
+        shop,
+        OR: [
+          { sku: item.sku },
+          { title: item.title }
+        ]
+      },
+      data: {
+        inventory: {
+          increment: item.quantity
+        }
+      }
+    });
+  }
+
+  // 3. Mark the PO as RECEIVED so it can't be received twice
+  return await prisma.purchaseOrder.update({
+    where: { id: poId },
+    data: { status: "RECEIVED" }
+  });
+}
