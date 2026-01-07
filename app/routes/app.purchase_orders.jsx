@@ -7,7 +7,7 @@ import { generatePO } from "../utils/pdfGenerator";
 import { updatePurchaseOrder, receivePurchaseOrder } from "../services/po.server"; 
 import {
   Page, Layout, Card, IndexTable, Text, Badge, Button, Modal, 
-  useIndexResourceState, TextField, InlineStack, Tooltip, Banner
+  useIndexResourceState, TextField, InlineStack, Tooltip
 } from "@shopify/polaris";
 import { PageDownIcon, EditIcon, DeleteIcon, ImportIcon } from "@shopify/polaris-icons"; 
 
@@ -40,14 +40,8 @@ export const action = async ({ request }) => {
   }
 
   if (intent === "receive") {
-    // Call service and capture result
-    const result = await receivePurchaseOrder(admin, session.shop, id);
-    
-    // If service returns an error object, send it to frontend
-    if (result.error) {
-        return { status: "error", message: result.error };
-    }
-    return { status: "received", count: result.count };
+    await receivePurchaseOrder(admin, session.shop, id);
+    return { status: "received" };
   }
 
   return null;
@@ -63,28 +57,18 @@ export default function PurchaseOrders() {
   const [activePo, setActivePo] = useState(null); 
   const [editItems, setEditItems] = useState([]); 
 
-  // --- ERROR & SUCCESS HANDLING ---
   useEffect(() => {
     if (fetcher.data?.status === "received") {
-        window.shopify.toast.show(`Success! Stock added for ${fetcher.data.count} items.`);
-        setErrorMessage(null);
+        window.shopify.toast.show("Inventory updated successfully");
     }
     if (fetcher.data?.status === "updated") {
         window.shopify.toast.show("PO updated successfully");
-    }
-    if (fetcher.data?.status === "error") {
-        // If the error mentions 'scope' or permissions, force a reload to trigger auth
-        if (fetcher.data.message && fetcher.data.message.includes("scope")) {
-            window.top.location.reload(); // <--- FORCE RELOAD TO AUTH
-        } else {
-            setErrorMessage(fetcher.data.message);
-            window.shopify.toast.show("Failed to receive PO", { isError: true });
-        }
     }
   }, [fetcher.data]);
 
   const handleEditClick = (po) => {
     setActivePo(po);
+    // Clone items to avoid mutating original data directly
     setEditItems(JSON.parse(JSON.stringify(po.items)));
   };
 
@@ -95,7 +79,7 @@ export default function PurchaseOrders() {
 
   const handleUpdateItem = (index, field, value) => {
     const newItems = [...editItems];
-    newItems[index][field] = value; 
+    newItems[index][field] = value; // Store exact string (e.g. "10.")
     setEditItems(newItems);
   };
 
@@ -161,13 +145,7 @@ export default function PurchaseOrders() {
           <InlineStack gap="200">
              {po.status === "OPEN" && (
                <Tooltip content="Mark Received & Add Stock">
-                  {/* Loading state helps user know something is happening */}
-                  <Button 
-                    icon={ImportIcon} 
-                    onClick={() => handleReceive(po)} 
-                    loading={fetcher.state === "submitting" && fetcher.formData?.get("id") === po.id}
-                    accessibilityLabel="Receive Items" 
-                  />
+                  <Button icon={ImportIcon} onClick={() => handleReceive(po)} accessibilityLabel="Receive Items" />
                </Tooltip>
              )}
              <Button icon={PageDownIcon} onClick={() => handleDownloadPDF(po)} accessibilityLabel="Download PDF" />
@@ -186,15 +164,6 @@ export default function PurchaseOrders() {
     >
       <Layout>
         <Layout.Section>
-          
-          {/* --- ERROR BANNER: This will tell you EXACTLY why it failed --- */}
-          {fetcher.data?.status === "error" && (
-            <Banner tone="critical" title="Error Receiving PO">
-              <p>{fetcher.data.message}</p>
-              <p>Try restarting your server: <code>npm run dev</code></p>
-            </Banner>
-          )}
-
           <Card padding="0">
             <IndexTable
               resourceName={resourceName}
@@ -217,6 +186,7 @@ export default function PurchaseOrders() {
         </Layout.Section>
       </Layout>
 
+      {/* --- EDIT MODAL --- */}
       {activePo && (
         <Modal
           open={true}
@@ -227,7 +197,7 @@ export default function PurchaseOrders() {
             onAction: handleSaveChanges,
           }}
           secondaryActions={[{ content: 'Cancel', onAction: handleCloseModal }]}
-          size="large"
+          size="large"  // <--- UPDATED: This correctly applies the large width
         >
           <Modal.Section>
              <IndexTable
