@@ -1,19 +1,29 @@
-FROM node:20-alpine
-RUN apk add --no-cache openssl
+# Use a specific node version for stability
+FROM node:20-slim
 
-EXPOSE 3000
+# Install openssl as it's required by Prisma
+RUN apt-get update -y && apt-get install -y openssl
 
 WORKDIR /app
 
-ENV NODE_ENV=production
+# Copy only package files first to leverage Docker cache
+COPY package*.json ./
+COPY prisma ./prisma/
 
-COPY package.json package-lock.json* ./
+# Install ALL dependencies (including devDependencies needed for build)
+RUN npm install
 
-RUN npm ci --omit=dev && npm cache clean --force
-
+# Copy the rest of the app
 COPY . .
+
+# Generate Prisma Client explicitly for the Linux environment
 RUN npx prisma generate
 
+# Set production environment variables for the build
+ENV NODE_ENV=production
+
+# Run the build
 RUN npm run build
 
+# Final command
 CMD ["npm", "run", "docker-start"]
