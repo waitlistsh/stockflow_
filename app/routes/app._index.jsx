@@ -1,4 +1,5 @@
 // app/routes/app._index.jsx
+import { useState, useCallback, useEffect } from "react"; // Added React hooks
 import { useLoaderData, useFetcher, useNavigate, useNavigation } from "react-router"; 
 import { authenticate } from "../shopify.server";
 import { syncProducts, syncOrders } from "../services/inventory.server";
@@ -23,16 +24,47 @@ import { RefreshIcon, SettingsIcon, MagicIcon } from "@shopify/polaris-icons";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { calculateInventoryHealth } from "../utils/inventory.js";
 
+// --- NEW COMPONENT: Handles Local State for Override Input ---
+function OverrideCell({ id, value: initialValue, placeholder, onSave }) {
+  const [value, setValue] = useState(initialValue);
 
+  // Sync with server data if it changes externally
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
 
+  const handleChange = useCallback((newValue) => setValue(newValue), []);
 
+  const handleBlur = useCallback(() => {
+    // Only submit if the value is different from what we started with
+    if (String(value) !== String(initialValue)) {
+      onSave(id, value);
+    }
+  }, [id, value, initialValue, onSave]);
+
+  return (
+    <div style={{ width: '120px' }} onClick={(e) => e.stopPropagation()}>
+      <TextField
+        label="Override Velocity"
+        labelHidden
+        type="number"
+        placeholder={placeholder}
+        value={value ? String(value) : ""} 
+        suffix="/day"
+        autoComplete="off"
+        onChange={handleChange}
+        onBlur={handleBlur}
+      />
+    </div>
+  );
+}
 
 export const action = async ({ request }) => {
   const { admin } = await authenticate.admin(request);
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // NEW: Handle Strategic Override Save
+  // Handle Strategic Override Save
   if (intent === "update_override") {
     const id = formData.get("id");
     const override = formData.get("override");
@@ -61,7 +93,7 @@ export const loader = async ({ request }) => {
     const daysWithData = item.sales.length || 1;
     const velocity = totalSold / daysWithData;
     
-    // NEW: Pass overrideVelocity to the utility
+    // Pass overrideVelocity to the utility
     const health = calculateInventoryHealth(item.inventory, velocity, item.overrideVelocity);
 
     return {
@@ -69,7 +101,7 @@ export const loader = async ({ request }) => {
       name: item.title, 
       stockLevel: item.inventory,
       salesVelocity: velocity,
-      overrideVelocity: item.overrideVelocity, // Pass this for the TextField
+      overrideVelocity: item.overrideVelocity, 
       health: health,
       daysRemaining: (item.overrideVelocity || velocity) > 0 
         ? item.inventory / (item.overrideVelocity || velocity) 
@@ -133,7 +165,6 @@ export default function Index() {
   const navigate = useNavigate();
   const navigation = useNavigation();
 
-  // DEFINITION ADDED HERE:
   const isLoading = fetcher.state === "submitting";
 
   // Navigation Logic
@@ -143,7 +174,7 @@ export default function Index() {
 
   if (isGoingToAnalyze) {
     return (
-      <Page>
+      <Page fullWidth>
         <div style={{display: 'flex', flexDirection: 'column', justifyContent: 'center', height: '80vh', alignItems: 'center', gap: '20px'}}>
           <Spinner accessibilityLabel="Consulting AI" size="large" />
           <Text variant="headingMd" as="h2">Consulting AI Inventory Expert...</Text>
@@ -153,8 +184,15 @@ export default function Index() {
     );
   }
 
+  // --- HANDLER: Trigger Fetcher on Save ---
+  const handleOverrideSave = (id, newVal) => {
+    fetcher.submit(
+      { id: id, override: newVal, intent: "update_override" },
+      { method: "POST" }
+    );
+  };
 
-const rowMarkup = forecastData.map((item, index) => { 
+  const rowMarkup = forecastData.map((item, index) => { 
     const { id, name, stockLevel, salesVelocity, health, overrideVelocity } = item;
     
     let tone = health.riskLabel === "OUT OF STOCK" || health.riskLabel === "HIGH" ? "critical" : 
@@ -166,26 +204,14 @@ const rowMarkup = forecastData.map((item, index) => {
         <IndexTable.Cell>{stockLevel}</IndexTable.Cell>
         <IndexTable.Cell>{salesVelocity.toFixed(2)}/day</IndexTable.Cell>
         
-        {/* STRATEGIC FORECASTING: Manual Override Input */}
+        {/* STRATEGIC FORECASTING: Manual Override Input (Using New Component) */}
         <IndexTable.Cell>
-          <div style={{ width: '100px' }}>
-            <TextField
-              label="Override Velocity"
-              labelHidden
-              type="number"
-              placeholder={salesVelocity.toFixed(2)}
-              value={overrideVelocity} 
-              suffix="/day"
-              autoComplete="off"
-              onChange={(val) => {
-               
-                fetcher.submit(
-                  { id: id, override: val, intent: "update_override" },
-                  { method: "POST" }
-                );
-              }}
-            />
-          </div>
+          <OverrideCell 
+            id={id}
+            value={overrideVelocity}
+            placeholder={salesVelocity.toFixed(2)}
+            onSave={handleOverrideSave}
+          />
         </IndexTable.Cell>
 
         <IndexTable.Cell>
@@ -201,22 +227,14 @@ const rowMarkup = forecastData.map((item, index) => {
               <Button 
                 variant="plain" 
                 onClick={() => {
-                  // 1. Build the specific analysis parameters
                   const analysisParams = new URLSearchParams({
                     product: name,
                     velocity: salesVelocity.toFixed(2),
                     stock: stockLevel.toString()
                   });
 
-                  // 2. Preserve existing Shopify session parameters (shop, host, etc.)
                   const currentParams = new URLSearchParams(window.location.search);
-                  
-                  // 3. Merge them
-                  analysisParams.forEach((value, key) => {
-                    currentParams.set(key, value);
-                  });
-
-                  // 4. Navigate to the analyze route with the full query string
+                  analysisParams.forEach((value, key) => currentParams.set(key, value));
                   navigate(`analyze?${currentParams.toString()}`);
                 }}
               >
@@ -227,11 +245,12 @@ const rowMarkup = forecastData.map((item, index) => {
         </IndexTable.Cell>
       </IndexTable.Row>
     );
-});
+  });
 
   return (
   <Page
     title="Inventory Forecast"
+    fullWidth // FIXED: Makes the whole page wider
     primaryAction={
       <Button 
         icon={RefreshIcon} 
@@ -250,6 +269,10 @@ const rowMarkup = forecastData.map((item, index) => {
       {
         content: "Inventory Analysis",
         onAction: () => navigate("/app/analyze" + window.location.search),
+      },
+      {
+        content: "Supplier Management",
+        onAction: () => navigate("/app/suppliers" + window.location.search),
       },
       {
         content: "Settings",
@@ -295,7 +318,14 @@ const rowMarkup = forecastData.map((item, index) => {
               <IndexTable
                 resourceName={{ singular: 'product', plural: 'products' }}
                 itemCount={forecastData.length}
-                headings={[{ title: 'Product' }, { title: 'Stock Level' }, { title: 'Sales Velocity' }, { title: 'Runway (Days)' }, { title: 'Risk & Action' }]}
+                headings={[
+                  { title: 'Product' }, 
+                  { title: 'Stock Level' }, 
+                  { title: 'Sales Velocity' }, 
+                  { title: 'Override - # of items per day' },        
+                  { title: 'Runway (Days)' },   
+                  { title: 'Risk & Action' }   
+                ]}
                 selectable={false}
               >
                 {rowMarkup}

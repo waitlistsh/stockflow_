@@ -2,7 +2,7 @@
 import prisma from "../db.server";
 
 // --- 1. SYNC PRODUCTS ---
-export async function syncProducts(admin, shop) { // Ensure 'shop' is passed if needed, currently app.analyze passes it
+export async function syncProducts(admin, shop) {
   console.log("📦 Starting Product Sync...");
   
   const response = await admin.graphql(
@@ -10,7 +10,7 @@ export async function syncProducts(admin, shop) { // Ensure 'shop' is passed if 
       query getProducts {
         products(first: 50) {
           nodes {
-            id, title
+            id, title, vendor
             variants(first: 10) {
               nodes {
                 id, sku, price, inventoryQuantity, title
@@ -31,48 +31,76 @@ export async function syncProducts(admin, shop) { // Ensure 'shop' is passed if 
   const products = data.data.products.nodes;
 
   for (const product of products) {
+    
+    // --- 1. Find or Create Supplier (Robust Upsert) ---
+    let supplierId = null;
+    
+    if (product.vendor) {
+      // Because we added @@unique([shop, name]) to schema, we can safely upsert
+      const supplier = await prisma.supplier.upsert({
+        where: {
+          shop_name: {
+            shop: shop || "current-shop",
+            name: product.vendor
+          }
+        },
+        update: {}, // No changes if exists
+        create: {
+          shop: shop || "current-shop",
+          name: product.vendor,
+          leadTime: 14,
+        }
+      });
+      supplierId = supplier.id;
+    }
+
     for (const variant of product.variants.nodes) {
       const cleanVariantId = variant.id.split("/").pop(); 
       const cleanProductId = product.id.split("/").pop();
-
-      // --- ROADMAP FIX: Fallback for missing SKU ---
+      
       let finalSku = variant.sku;
-      if (!finalSku || finalSku === "") {
-        // Fallback: Product Title (plus Variant Title if not default)
+      if (!finalSku || finalSku.trim() === "") {
         finalSku = variant.title === "Default Title" 
           ? product.title 
-          : `${product.title}-${variant.title}`;
-        
-        // Cleanup string (optional)
-        finalSku = finalSku.replace(/\s+/g, '-').toUpperCase();
+          : `${product.title} - ${variant.title}`;
+        finalSku = finalSku.toUpperCase(); 
       }
 
-      // --- ROADMAP FIX: Cost Price ---
-      // Note: cost might be null in Shopify
-      const importedCost = variant.inventoryItem?.unitCost?.amount 
+      const shopifyCost = variant.inventoryItem?.unitCost?.amount 
         ? parseFloat(variant.inventoryItem.unitCost.amount) 
-        : 0.0;
+        : 0;
+
+      // Check existing item to preserve manual links if they exist
+      const existingItem = await prisma.inventoryItem.findUnique({
+        where: { variantId: cleanVariantId }
+      });
+
+      const finalSupplierId = existingItem?.supplierId || supplierId;
 
       await prisma.inventoryItem.upsert({
         where: { variantId: cleanVariantId },
         update: {
           inventory: variant.inventoryQuantity,
           price: parseFloat(variant.price),
-          // Only update cost if Shopify has a non-zero value, 
-          // otherwise keep our local value (which might be manually set)
-          ...(importedCost > 0 ? { cost: importedCost } : {}),
+          vendor: product.vendor, // Update text field
           title: `${product.title} - ${variant.sku || ''}`,
-          sku: finalSku, // Save the cleaned/fallback SKU
+          sku: finalSku,
+          ...(shopifyCost > 0 ? { cost: shopifyCost } : {}),
+          // Only auto-link if it's currently null
+          ...(existingItem?.supplierId ? {} : { supplierId: finalSupplierId })
         },
         create: {
           shop: shop || "current-shop", 
           productId: cleanProductId,
           variantId: cleanVariantId,
-          sku: finalSku,
+          sku: finalSku, 
           title: `${product.title} - ${variant.sku || ''}`,
           inventory: variant.inventoryQuantity,
           price: parseFloat(variant.price),
-          cost: importedCost, // Initialize with imported cost (or 0)
+          vendor: product.vendor,
+          cost: shopifyCost,
+          targetDays: 30,
+          supplierId: finalSupplierId
         },
       });
     }
@@ -80,16 +108,14 @@ export async function syncProducts(admin, shop) { // Ensure 'shop' is passed if 
   console.log(`✅ Synced ${products.length} products.`);
 }
 
-// --- 2. SYNC SALES HISTORY (The New Part) ---
+// --- 2. SYNC SALES HISTORY ---
 export async function syncOrders(admin) {
   console.log("💰 Starting Order Sync (Last 60 Days)...");
 
-  // Get date 60 days ago
   const date = new Date();
   date.setDate(date.getDate() - 60);
   const searchDate = date.toISOString();
 
-  // Query Shopify for orders
   const response = await admin.graphql(
     `#graphql
       query getOrders($query: String!) {
@@ -113,19 +139,16 @@ export async function syncOrders(admin) {
   const data = await response.json();
   const orders = data.data.orders.nodes;
 
-  // Process orders into the database
   for (const order of orders) {
     const orderDate = new Date(order.createdAt);
-    // Normalize time to midnight (so we group by day)
     orderDate.setHours(0, 0, 0, 0);
 
     for (const item of order.lineItems.nodes) {
-      if (!item.variant) continue; // Skip custom items/gift cards
+      if (!item.variant) continue; 
 
       const cleanVariantId = item.variant.id.split("/").pop();
       const revenue = parseFloat(item.originalTotalSet.shopMoney.amount);
 
-      // Find if we already have a record for this Item + This Day
       const existingRecord = await prisma.dailySales.findFirst({
         where: {
           variantId: cleanVariantId,
@@ -134,7 +157,6 @@ export async function syncOrders(admin) {
       });
 
       if (existingRecord) {
-        // Update existing day
         await prisma.dailySales.update({
           where: { id: existingRecord.id },
           data: {
@@ -143,8 +165,6 @@ export async function syncOrders(admin) {
           }
         });
       } else {
-        // Create new day record
-        // Only if the variant exists in our DB (Synced first)
         const variantExists = await prisma.inventoryItem.findUnique({
           where: { variantId: cleanVariantId }
         });

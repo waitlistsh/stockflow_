@@ -1,5 +1,5 @@
 // app/routes/app.analyze.jsx
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useLoaderData, useNavigation, useFetcher, useNavigate } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
@@ -12,6 +12,38 @@ import {
 } from "@shopify/polaris";
 import { RefreshIcon, SettingsIcon, PinIcon } from "@shopify/polaris-icons"; 
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
+
+
+function EditableCell({ value: initialValue, onSave }) {
+  const [value, setValue] = useState(initialValue);
+
+  useEffect(() => {
+    setValue(initialValue);
+  }, [initialValue]);
+
+  const handleChange = useCallback((newValue) => setValue(newValue), []);
+  
+  const handleBlur = useCallback(() => {
+    // Only save if the value actually changed to prevent unnecessary network calls
+    if (value !== initialValue) {
+      onSave(value);
+    }
+  }, [value, initialValue, onSave]);
+
+  return (
+    <div style={{ width: '80px' }} onClick={(e) => e.stopPropagation()}>
+      <TextField
+        type="number"
+        value={String(value)}
+        onChange={handleChange}
+        onBlur={handleBlur}
+        autoComplete="off"
+        label="Edit Target"
+        labelHidden
+      />
+    </div>
+  );
+}
 
 // --- HELPER: Generate Sparkline Data (Last 30 Days) ---
 const getSparklineData = (salesHistory) => {
@@ -41,11 +73,9 @@ export const action = async ({ request }) => {
 
   // 1. SYNC DATA
   if (intent === "sync") {
-    // Pass session.shop to ensure we tag items correctly
     await syncProducts(admin, session.shop);
     await syncOrders(admin);
     
-    // Update Last Synced Timestamp
     await prisma.merchantSettings.upsert({
       where: { shop: session.shop },
       update: { lastSyncedAt: new Date() },
@@ -66,14 +96,11 @@ export const action = async ({ request }) => {
     return { status: "pinned" };
   }
 
-  // 3. UPDATE ITEM (Cost or Target Days)
+  // 3. UPDATE ITEM (Target Days)
   if (intent === "update_item") {
     const itemId = formData.get("itemId");
     const updates = {};
     
-    if (formData.has("cost")) {
-      updates.cost = parseFloat(formData.get("cost"));
-    }
     if (formData.has("targetDays")) {
       updates.targetDays = parseInt(formData.get("targetDays"));
     }
@@ -97,11 +124,10 @@ export const loader = async ({ request }) => {
     where: { shop: session.shop }
   });
 
-  // Default thresholds if not set in DB
   const riskCritical = settings?.riskDaysCritical || 14;
   const riskWarning = settings?.riskDaysWarning || 30;
 
-  // 1. Fetch ALL Inventory (Sort by Pinned first, then Risk)
+  // 1. Fetch ALL Inventory
   const items = await prisma.inventoryItem.findMany({
     include: {
       sales: {
@@ -109,7 +135,7 @@ export const loader = async ({ request }) => {
       }
     },
     orderBy: [
-      { isPinned: 'desc' }, // Pinned items appear first
+      { isPinned: 'desc' }, 
       { inventory: 'desc' } 
     ]
   });
@@ -122,16 +148,13 @@ export const loader = async ({ request }) => {
   let highRiskCount = 0;
 
   const enrichedItems = items.map(item => {
-    // KPI Calc
     totalStockValue += (item.inventory * item.cost);
     potentialRevenue += (item.inventory * item.price);
     if (item.inventory <= 0) outOfStockCount++;
     
-    // Velocity Calc
     const totalSold = item.sales.reduce((acc, s) => acc + s.quantitySold, 0);
     const velocity = totalSold / 30; 
     
-    // CHANGED: Handle OOS runway as -1 for sorting logic (High Health -> OOS)
     let runway;
     if (item.inventory <= 0) {
       runway = -1;
@@ -139,7 +162,7 @@ export const loader = async ({ request }) => {
       runway = velocity > 0 ? item.inventory / velocity : 999;
     }
 
-    // --- PREDICTIVE ANALYTICS: Calculate Expected Stockout Date ---
+    // Still calculating forecastDate for sorting/logic if needed, but won't display it
     let forecastDate = "Indefinite";
     if (item.inventory <= 0) {
       forecastDate = "Out of Stock";
@@ -149,17 +172,12 @@ export const loader = async ({ request }) => {
       targetDate.setDate(today.getDate() + runway);
       
       forecastDate = targetDate.toLocaleDateString('en-US', { 
-        month: 'short', 
-        day: 'numeric', 
-        year: 'numeric' 
+        month: 'short', day: 'numeric', year: 'numeric' 
       });
     }
-    // -------------------------------------------------------------
 
-    // Use Custom Thresholds for Stats
     if (runway < riskCritical && item.inventory > 0) highRiskCount++;
 
-    // Determine Status String for Filtering
     let statusLabel = "Healthy";
     if (item.inventory <= 0) statusLabel = "Out of Stock";
     else if (runway < riskCritical) statusLabel = "Critical";
@@ -170,12 +188,11 @@ export const loader = async ({ request }) => {
       velocity,
       runway,
       forecastDate,
-      statusLabel, // Passed to frontend for filtering
+      statusLabel,
       sparkline: getSparklineData(item.sales)
     };
   });
 
-  // 3. AI Executive Report
   let aiReport = "AI Analysis Unavailable - Check API Key";
   
   if (settings?.openaiKey) {
@@ -227,12 +244,10 @@ export default function ProfessionalAnalysis() {
   const isSyncing = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "sync";
   const isLoading = navigation.state === "loading" && !isSyncing;
 
-  // --- 1. STATE ---
   const [queryValue, setQueryValue] = useState("");
   const [selectedStatus, setSelectedStatus] = useState([]);
   const [sortSelected, setSortSelected] = useState(["runway desc"]);
 
-  // --- 2. HANDLERS ---
   const handleQueryValueChange = useCallback((value) => setQueryValue(value), []);
   const handleStatusChange = useCallback((value) => setSelectedStatus(value), []);
   const handleQueryValueRemove = useCallback(() => setQueryValue(""), []);
@@ -243,11 +258,10 @@ export default function ProfessionalAnalysis() {
   }, [handleQueryValueRemove, handleStatusRemove]);
 
   const onSort = useCallback((headingIndex, direction) => {
-    // Adjusted mapping for new columns
     const mapping = {
       0: 'title',
-      1: 'cost',       // New
-      2: 'targetDays', // New
+      1: 'cost',       
+      2: 'targetDays', 
       3: 'inventory',
       5: 'velocity',
       6: 'runway' 
@@ -268,19 +282,14 @@ export default function ProfessionalAnalysis() {
     {label: 'Velocity: High to Low', value: 'velocity desc'},
   ];
 
-  // --- 3. FILTERING (Must come FIRST) ---
   const filteredItems = items.filter((item) => {
-    // Text Search (Title or SKU)
     const matchText = item.title.toLowerCase().includes(queryValue.toLowerCase()) || 
                       (item.sku && item.sku.toLowerCase().includes(queryValue.toLowerCase()));
     
-    // Status Filter
     const matchStatus = selectedStatus.length === 0 || selectedStatus.includes(item.statusLabel);
-
     return matchText && matchStatus;
   });
 
-  // --- 4. SORTING (Must come AFTER filtering) ---
   const sortedItems = [...filteredItems].sort((a, b) => {
     const [sortKey, sortDirection] = sortSelected[0].split(" ");
     let valA = a[sortKey];
@@ -294,11 +303,9 @@ export default function ProfessionalAnalysis() {
     return 0;
   });
 
-  // --- 5. SELECTION STATE (Use sorted items) ---
   const resourceName = { singular: 'product', plural: 'products' };
   const { selectedResources, allResourcesSelected, handleSelectionChange } = useIndexResourceState(sortedItems);
 
-  // Filters Configuration
   const filters = [
     {
       key: 'status',
@@ -340,7 +347,6 @@ export default function ProfessionalAnalysis() {
     fetcher.submit(formData, { method: "POST" });
   };
 
-  // --- HELPER: Dynamic Status Badge ---
   const getStatusBadge = (item) => {
     if (item.statusLabel === "Out of Stock") return <Badge tone="critical">Out of Stock</Badge>;
     if (item.statusLabel === "Critical") return <Badge tone="critical">{Math.floor(item.runway)} Days (Critical)</Badge>;
@@ -368,16 +374,14 @@ export default function ProfessionalAnalysis() {
     );
   }
 
-  // Row Markup (Iterate over sortedItems)
   const rowMarkup = sortedItems.map((item, index) => (
     <IndexTable.Row id={item.id} key={item.id} position={index} selected={selectedResources.includes(item.id)}>
       <IndexTable.Cell>
         <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-          {/* PIN BUTTON */}
           <Tooltip content={item.isPinned ? "Unpin product" : "Pin to top"}>
             <button 
               onClick={(e) => {
-                e.stopPropagation(); // Prevent row selection
+                e.stopPropagation(); 
                 fetcher.submit({ intent: "pin", itemId: item.id, currentStatus: item.isPinned }, { method: "POST" });
               }}
               style={{ 
@@ -397,55 +401,26 @@ export default function ProfessionalAnalysis() {
         </div>
       </IndexTable.Cell>
       
-      {/* COST COLUMN (Editable if 0, otherwise Read-only) */}
+      {/* COST COLUMN (Read-Only) */}
       <IndexTable.Cell>
-        {item.cost > 0 ? (
-          <Text variant="bodyMd">${item.cost.toFixed(2)}</Text>
-        ) : (
-          <div style={{ width: '80px' }} onClick={(e) => e.stopPropagation()}>
-             <TextField
-               type="number"
-               value={item.cost === 0 ? "" : item.cost}
-               placeholder="$0.00"
-               autoComplete="off"
-               onBlur={(e) => handleUpdateItem(item.id, 'cost', e.target.value)}
-               onChange={() => {}}
-               label="Cost"
-               labelHidden
-             />
-          </div>
-        )}
+        <Text variant="bodyMd">${item.cost?.toFixed(2) || '0.00'}</Text>
       </IndexTable.Cell>
 
-      {/* TARGET DAYS (Editable) */}
+      {/* TARGET DAYS (Editable with Component) */}
       <IndexTable.Cell>
-         <div style={{ width: '70px' }} onClick={(e) => e.stopPropagation()}>
-            <TextField
-              type="number"
-              value={item.targetDays?.toString()}
-              autoComplete="off"
-              onBlur={(e) => handleUpdateItem(item.id, 'targetDays', e.target.value)}
-              onChange={() => {}}
-              label="Target Days"
-              labelHidden
-            />
-         </div>
+         <EditableCell 
+            value={item.targetDays} 
+            onSave={(val) => handleUpdateItem(item.id, 'targetDays', val)} 
+         />
       </IndexTable.Cell>
 
       <IndexTable.Cell>{item.inventory}</IndexTable.Cell>
       
-      {/* SPARKLINE CELL */}
       <IndexTable.Cell>
         <div style={{ width: '100px', height: '30px' }}>
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={item.sparkline}>
-              <Line 
-                type="monotone" 
-                dataKey="val" 
-                stroke="#008060" 
-                strokeWidth={2} 
-                dot={false} 
-              />
+              <Line type="monotone" dataKey="val" stroke="#008060" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -455,14 +430,13 @@ export default function ProfessionalAnalysis() {
         <Text variant="bodyMd">{item.velocity.toFixed(1)} /day</Text>
       </IndexTable.Cell>
 
-      {/* READ-ONLY RUNWAY (Calculated) */}
+      {/* RUNWAY (Simplified Format) */}
       <IndexTable.Cell>
          <Text variant="bodyMd" tone={item.runway < settings.riskCritical ? "critical" : "subdued"}>
-           {item.forecastDate} ({item.runway === -1 ? "0" : Math.floor(item.runway)} days)
+           {item.runway === -1 ? "0" : Math.floor(item.runway)} Days
          </Text>
       </IndexTable.Cell>
 
-      {/* DYNAMIC HEALTH STATUS CELL */}
       <IndexTable.Cell>
          {getStatusBadge(item)}
       </IndexTable.Cell>
@@ -493,6 +467,10 @@ export default function ProfessionalAnalysis() {
           onAction: () => navigate("/app" + window.location.search),
         },
         {
+        content: "Supplier Management",
+        onAction: () => navigate("/app/suppliers" + window.location.search),
+      },
+        {
           content: "Settings",
           icon: SettingsIcon,
           onAction: () => navigate("/app/settings" + window.location.search),
@@ -501,7 +479,6 @@ export default function ProfessionalAnalysis() {
     >
       <BlockStack gap="500">
         
-        {/* REAL-TIME STATUS BANNER */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0 1rem' }}>
            <Text variant="bodySm" tone="subdued">
              Risk Thresholds: &lt;{settings.riskCritical} days (Critical), &lt;{settings.riskWarning} days (Warning)
@@ -511,7 +488,6 @@ export default function ProfessionalAnalysis() {
            </Text>
         </div>
 
-        {/* EXECUTIVE SUMMARY CARD */}
         <Layout>
           <Layout.Section>
             <Card>
@@ -526,7 +502,6 @@ export default function ProfessionalAnalysis() {
 
                 <Divider />
 
-                {/* KPI GRID */}
                 <InlineGrid columns={4} gap="400">
                   <Box>
                     <Text variant="headingXs" tone="subdued">TOTAL VALUATION</Text>
@@ -554,13 +529,11 @@ export default function ProfessionalAnalysis() {
           </Layout.Section>
         </Layout>
 
-        {/* FULL INVENTORY TABLE */}
         <Layout>
           <Layout.Section>
             <Card padding="0">
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '16px' }}>
                 <div style={{ flex: 1 }}>
-                  {/* FILTERS COMPONENT */}
                   <Filters
                     queryValue={queryValue}
                     filters={filters}
@@ -571,7 +544,6 @@ export default function ProfessionalAnalysis() {
                   />
                 </div>
                 
-                {/* SORTING DROPDOWN */}
                 <div style={{ width: '200px' }}>
                    <Select
                      label="Sort by"
@@ -593,12 +565,12 @@ export default function ProfessionalAnalysis() {
                 onSort={onSort}
                 headings={[
                   { title: 'Product' },
-                  { title: 'Cost' },       // NEW
-                  { title: 'Target Days' }, // NEW
+                  { title: 'Cost' },       
+                  { title: 'Target Days' },
                   { title: 'Stock' },
                   { title: 'Trend' }, 
                   { title: 'Velocity' },
-                  { title: 'Runway' },     // READ-ONLY
+                  { title: 'Runway' },     
                   { title: 'Health Status' },
                 ]}
               >

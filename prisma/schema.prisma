@@ -40,15 +40,21 @@ model InventoryItem {
   cost        Float    @default(0.0)
   price       Float    @default(0.0)
   leadTime    Int      @default(14) 
+  
+  // Keep vendor as a simple string for reference
   vendor      String?
+  
   category    String?  
   reorderPoint Int     @default(5) 
   sales       DailySales[] 
   overrideVelocity Float?
   isPinned    Boolean  @default(false)
   targetDays  Int      @default(30) 
-}
 
+  // --- RELATION: Link to Supplier via ID ---
+  supplierId  String?
+  supplier    Supplier? @relation(fields: [supplierId], references: [id])
+}
 
 model DailySales {
   id            String        @id @default(uuid())
@@ -63,13 +69,25 @@ model DailySales {
 }
 
 model MerchantSettings {
-  shop          String @id
-  openaiKey     String?
-  safetyStock   Int     @default(7) 
-  useAI         Boolean @default(false)
-
-  // --- NEW FIELDS FOR SETTINGS & SYNC ---
+  shop             String @id
+  openaiKey        String?
+  safetyStock      Int     @default(7) 
+  useAI            Boolean @default(false)
   riskDaysCritical Int     @default(14)
   riskDaysWarning  Int     @default(30)
   lastSyncedAt     DateTime?
+}
+
+model Supplier {
+  id          String   @id @default(uuid())
+  shop        String
+  name        String
+  email       String?
+  contactName String?
+  leadTime    Int      @default(14)
+  
+  items       InventoryItem[]
+
+  // Ensures a supplier name is unique per shop
+  @@unique([shop, name])
 }
