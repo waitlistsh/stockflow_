@@ -6,7 +6,7 @@ import { AppProvider as PolarisAppProvider } from '@shopify/polaris';
 import enTranslations from '@shopify/polaris/locales/en.json';
 import '@shopify/polaris/build/esm/styles.css';
 import { authenticate } from "../shopify.server";
-import { NavMenu } from "@shopify/app-bridge-react";
+
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
