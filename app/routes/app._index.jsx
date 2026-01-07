@@ -1,7 +1,7 @@
 // app/routes/app._index.jsx
 import { useState, useCallback, useEffect } from "react"; 
 import { useLoaderData, useFetcher, useNavigate, useNavigation, useLocation } from "react-router"; 
-import { authenticate } from "../shopify.server"; // <--- THIS LINE IS MISSING
+import { authenticate } from "../shopify.server";
 import { syncProducts, syncOrders } from "../services/inventory.server";
 import prisma from "../db.server";
 import OpenAI from "openai"; 
@@ -13,21 +13,14 @@ import { RefreshIcon, SettingsIcon, MagicIcon } from "@shopify/polaris-icons";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { calculateInventoryHealth } from "../utils/inventory.js";
 
-
-
-
 function OverrideCell({ id, value: initialValue, placeholder, onSave }) {
   const [value, setValue] = useState(initialValue);
 
-  // Sync with server data if it changes externally
-  useEffect(() => {
-    setValue(initialValue);
-  }, [initialValue]);
+  useEffect(() => { setValue(initialValue); }, [initialValue]);
 
   const handleChange = useCallback((newValue) => setValue(newValue), []);
 
   const handleBlur = useCallback(() => {
-    // Only submit if the value is different from what we started with
     if (String(value) !== String(initialValue)) {
       onSave(id, value);
     }
@@ -55,7 +48,6 @@ export const action = async ({ request }) => {
   const formData = await request.formData();
   const intent = formData.get("intent");
 
-  // Handle Strategic Override Save
   if (intent === "update_override") {
     const id = formData.get("id");
     const override = formData.get("override");
@@ -83,8 +75,6 @@ export const loader = async ({ request }) => {
     const totalSold = item.sales.reduce((sum, day) => sum + day.quantitySold, 0);
     const daysWithData = item.sales.length || 1;
     const velocity = totalSold / daysWithData;
-    
-    // Pass overrideVelocity to the utility
     const health = calculateInventoryHealth(item.inventory, velocity, item.overrideVelocity);
 
     return {
@@ -102,7 +92,6 @@ export const loader = async ({ request }) => {
   
   forecastData.sort((a, b) => a.daysRemaining - b.daysRemaining);
 
-  // 3. Prepare Chart Data (Last 14 Days)
   const chartData = [];
   const today = new Date();
   for (let i = 13; i >= 0; i--) {
@@ -118,19 +107,16 @@ export const loader = async ({ request }) => {
       const dateKey = saleDate.toLocaleDateString('en-US', { month: 'short', day: '2-digit' });
       const dayEntry = chartData.find(d => d.date === dateKey);
       if (dayEntry) {
-        const revenue = sale.quantitySold * (item.price || 0); 
-        dayEntry.revenue += revenue;
+        dayEntry.revenue += sale.quantitySold * (item.price || 0); 
       }
     });
   });
 
-  // 4. Dashboard AI Executive Summary
   let aiSummary = null;
   if (settings?.openaiKey && chartData.length > 0) {
     try {
       const openai = new OpenAI({ apiKey: settings.openaiKey });
       const totalRev = chartData.reduce((sum, d) => sum + d.revenue, 0);
-      
       const completion = await openai.chat.completions.create({
         messages: [{ 
           role: "user", 
@@ -155,10 +141,10 @@ export default function Index() {
   const fetcher = useFetcher();
   const navigate = useNavigate();
   const navigation = useNavigation();
+  const location = useLocation(); // <--- FIXED: Initialized this hook
 
   const isLoading = fetcher.state === "submitting";
 
-  // Navigation Logic
   const isGoingToAnalyze = 
     navigation.state === "loading" && 
     navigation.location.pathname.includes("analyze");
@@ -175,7 +161,6 @@ export default function Index() {
     );
   }
 
-  // --- HANDLER: Trigger Fetcher on Save ---
   const handleOverrideSave = (id, newVal) => {
     fetcher.submit(
       { id: id, override: newVal, intent: "update_override" },
@@ -194,8 +179,6 @@ export default function Index() {
         <IndexTable.Cell><Text variant="bodyMd" fontWeight="bold" as="span">{name}</Text></IndexTable.Cell>
         <IndexTable.Cell>{stockLevel}</IndexTable.Cell>
         <IndexTable.Cell>{salesVelocity.toFixed(2)}/day</IndexTable.Cell>
-        
-        {/* STRATEGIC FORECASTING: Manual Override Input (Using New Component) */}
         <IndexTable.Cell>
           <OverrideCell 
             id={id}
@@ -204,13 +187,11 @@ export default function Index() {
             onSave={handleOverrideSave}
           />
         </IndexTable.Cell>
-
         <IndexTable.Cell>
           <Text tone={tone === "attention" ? "warning" : tone}>
             {health.runwayText}
           </Text>
         </IndexTable.Cell>
-        
         <IndexTable.Cell>
           <InlineStack align="start" gap="200">
             <Badge tone={tone}>{health.riskLabel}</Badge>
@@ -223,8 +204,8 @@ export default function Index() {
                     velocity: salesVelocity.toFixed(2),
                     stock: stockLevel.toString()
                   });
-
-                  const currentParams = new URLSearchParams(window.location.search);
+                  // FIXED: Use location.search here as well
+                  const currentParams = new URLSearchParams(location.search);
                   analysisParams.forEach((value, key) => currentParams.set(key, value));
                   navigate(`analyze?${currentParams.toString()}`);
                 }}
@@ -252,7 +233,7 @@ export default function Index() {
         Sync & Refresh
       </Button>
     }
-
+    // 👇 FIXED: Updated all navigation actions to use location.search 👇
     secondaryActions={[
       {
         content: "Dashboard",
@@ -278,13 +259,11 @@ export default function Index() {
     ]}
   >
       <BlockStack gap="500">
-        
         {aiSummary && (
           <Banner title="Consultant Intelligence" icon={MagicIcon} tone="info">
             <p>{aiSummary}</p>
           </Banner>
         )}
-
         {chartData.length > 0 && (
           <Layout>
             <Layout.Section>
@@ -307,7 +286,6 @@ export default function Index() {
             </Layout.Section>
           </Layout>
         )}
-
         <Layout>
           <Layout.Section>
             <Card padding="0">

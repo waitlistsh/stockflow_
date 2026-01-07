@@ -8,17 +8,18 @@ import '@shopify/polaris/build/esm/styles.css';
 import { authenticate } from "../shopify.server";
 import { NavMenu } from "@shopify/app-bridge-react";
 
-
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
+// 👇 THIS EXPORT IS MISSING IN YOUR FILE 👇
 export const meta = ({ data }) => {
   return [
     { name: "shopify-api-key", content: data?.apiKey || "" }
   ];
 };
+// ----------------------------------------
 
 export default function App() {
   const { apiKey } = useLoaderData();
@@ -30,13 +31,11 @@ export default function App() {
       <PolarisAppProvider 
         i18n={enTranslations} 
         linkComponent={({ children, url, ...rest }) => {
-          // This ensures that any <Link> or back button preserves the ?shop= session info
           return (
             <a
               href={url}
               onClick={(e) => {
                 e.preventDefault();
-                // Append current URL parameters (shop, host) to the target URL
                 const targetUrl = url.includes('?') 
                   ? `${url}&${location.search.substring(1)}` 
                   : `${url}${location.search}`;
@@ -49,7 +48,6 @@ export default function App() {
           );
         }}
       >
-        {/* Frame and Navigation removed to get rid of the left sidebar menu */}
         <Outlet />
       </PolarisAppProvider>
     </ShopifyAppProvider>
