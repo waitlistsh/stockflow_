@@ -14,6 +14,12 @@ export const loader = async ({ request }) => {
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
+export const meta = ({ data }) => {
+  return [
+    { name: "shopify-api-key", content: data?.apiKey || "" }
+  ];
+};
+
 export default function App() {
   const { apiKey } = useLoaderData();
   const location = useLocation();

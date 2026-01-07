@@ -9,6 +9,7 @@ import {
 } from "@shopify/polaris";
 import { DeleteIcon } from "@shopify/polaris-icons";
 
+
 export const loader = async ({ request, params }) => {
   await authenticate.admin(request);
   

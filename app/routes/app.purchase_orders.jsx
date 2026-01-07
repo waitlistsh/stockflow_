@@ -138,7 +138,10 @@ export default function PurchaseOrders() {
   ));
 
   return (
-    <Page title="Purchase Orders" backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}>
+    <Page 
+      title="Purchase Orders" 
+      backAction={{ content: "Dashboard", onAction: () => navigate("/app/suppliers" + window.location.search) }}
+    >
       <Layout>
         <Layout.Section>
           <Card padding="0">

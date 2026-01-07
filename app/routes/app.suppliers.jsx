@@ -59,10 +59,14 @@ export default function Suppliers() {
       navigate(`/app/supplier/${fetcher.data.id}` + window.location.search);
     }
     if (fetcher.data?.status === "imported") {
-      window.shopify.toast.show(`Imported ${fetcher.data.count} vendors`);
+      // --- ADD SAFETY CHECK HERE ---
+      if (window.shopify?.toast) {
+        window.shopify.toast.show(`Imported ${fetcher.data.count} vendors`);
+      } else {
+        console.log(`Imported ${fetcher.data.count} vendors`);
+      }
     }
   }, [fetcher.data, navigate]);
-
   const rowMarkup = suppliers.map((supplier, index) => (
     <IndexTable.Row 
       id={supplier.id} 

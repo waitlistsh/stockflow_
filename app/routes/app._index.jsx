@@ -1,30 +1,21 @@
 // app/routes/app._index.jsx
-import { useState, useCallback, useEffect } from "react"; // Added React hooks
-import { useLoaderData, useFetcher, useNavigate, useNavigation } from "react-router"; 
-import { authenticate } from "../shopify.server";
+import { useState, useCallback, useEffect } from "react"; 
+import { useLoaderData, useFetcher, useNavigate, useNavigation, useLocation } from "react-router"; 
+import { authenticate } from "../shopify.server"; // <--- THIS LINE IS MISSING
 import { syncProducts, syncOrders } from "../services/inventory.server";
 import prisma from "../db.server";
 import OpenAI from "openai"; 
 import { 
-  Page, 
-  Layout, 
-  Card, 
-  IndexTable, 
-  Text, 
-  Badge, 
-  Button, 
-  InlineStack,
-  BlockStack,
-  Banner,
-  Box,
-  Spinner,
-  TextField
+  Page, Layout, Card, IndexTable, Text, Badge, Button, 
+  InlineStack, BlockStack, Banner, Box, Spinner, TextField
 } from "@shopify/polaris";
 import { RefreshIcon, SettingsIcon, MagicIcon } from "@shopify/polaris-icons"; 
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { calculateInventoryHealth } from "../utils/inventory.js";
 
-// --- NEW COMPONENT: Handles Local State for Override Input ---
+
+
+
 function OverrideCell({ id, value: initialValue, placeholder, onSave }) {
   const [value, setValue] = useState(initialValue);
 
@@ -250,7 +241,7 @@ export default function Index() {
   return (
   <Page
     title="Inventory Forecast"
-    fullWidth // FIXED: Makes the whole page wider
+    fullWidth
     primaryAction={
       <Button 
         icon={RefreshIcon} 
@@ -261,27 +252,28 @@ export default function Index() {
         Sync & Refresh
       </Button>
     }
+
     secondaryActions={[
       {
         content: "Dashboard",
-        onAction: () => navigate("/app" + window.location.search),
+        onAction: () => navigate("/app" + location.search),
       },
       {
         content: "Inventory Analysis",
-        onAction: () => navigate("/app/analyze" + window.location.search),
+        onAction: () => navigate("/app/analyze" + location.search),
       },
       {
         content: "Supplier Management",
-        onAction: () => navigate("/app/suppliers" + window.location.search),
+        onAction: () => navigate("/app/suppliers" + location.search),
       },
       {
         content: "Purchase Orders",
-        onAction: () => navigate("/app/purchase_orders" + window.location.search),
+        onAction: () => navigate("/app/purchase_orders" + location.search),
       },
       {
         content: "Settings",
         icon: SettingsIcon,
-        onAction: () => navigate("/app/settings" + window.location.search),
+        onAction: () => navigate("/app/settings" + location.search),
       },
     ]}
   >
