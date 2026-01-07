@@ -4,18 +4,18 @@ import { useLoaderData, useNavigation, useFetcher, useNavigate } from "react-rou
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { syncProducts, syncOrders } from "../services/inventory.server"; 
+import { createPurchaseOrders } from "../services/po.server"; 
 import OpenAI from "openai";
-// --- CHANGES HERE: Removed direct jsPDF imports, added utility import ---
-import { generatePO } from "../utils/pdfGenerator"; 
 import {
   Page, Layout, Card, Text, BlockStack, Banner, Spinner, Box,
   InlineGrid, Divider, IndexTable, Badge, useIndexResourceState, Tooltip,
-  Filters, ChoiceList, Select, TextField, Button, ButtonGroup
+  Filters, ChoiceList, Select, TextField, Button, ButtonGroup, Modal
 } from "@shopify/polaris";
 import { RefreshIcon, SettingsIcon, PinIcon, PageDownIcon, DiscountIcon } from "@shopify/polaris-icons"; 
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 
-// ... (EditableCell component remains the same) ...
+
+
 function EditableCell({ value: initialValue, onSave }) {
   const [value, setValue] = useState(initialValue);
 
@@ -65,7 +65,8 @@ const getSparklineData = (salesHistory) => {
   return data;
 };
 
-// ... (action and loader remain the same) ...
+
+// --- ACTION ---
 export const action = async ({ request }) => {
   const { admin, session } = await authenticate.admin(request);
   const formData = await request.formData();
@@ -74,52 +75,41 @@ export const action = async ({ request }) => {
   if (intent === "sync") {
     await syncProducts(admin, session.shop);
     await syncOrders(admin);
-    
-    await prisma.merchantSettings.upsert({
-      where: { shop: session.shop },
-      update: { lastSyncedAt: new Date() },
-      create: { shop: session.shop, lastSyncedAt: new Date() }
-    });
+    await prisma.merchantSettings.upsert({ where: { shop: session.shop }, update: { lastSyncedAt: new Date() }, create: { shop: session.shop, lastSyncedAt: new Date() } });
     return { status: "synced" };
   }
 
-  if (intent === "generate_po_numbers") {
+  // UPDATED: Create PO internally
+  if (intent === "create_po") {
     const itemsJson = formData.get("items");
     const items = JSON.parse(itemsJson);
-  
-    const poMap = await createPurchaseOrders(admin, session.shop, items);
     
-    return { status: "po_generated", poMap };
+    // Create DB records
+    await createPurchaseOrders(session.shop, items);
+    
+    return { status: "po_created" };
   }
 
   if (intent === "pin") {
     const itemId = formData.get("itemId");
     const currentStatus = formData.get("currentStatus") === "true";
-    await prisma.inventoryItem.update({
-      where: { id: itemId },
-      data: { isPinned: !currentStatus }
-    });
+    await prisma.inventoryItem.update({ where: { id: itemId }, data: { isPinned: !currentStatus } });
     return { status: "pinned" };
   }
 
   if (intent === "update_item") {
     const itemId = formData.get("itemId");
     const updates = {};
-    if (formData.has("targetDays")) {
-      updates.targetDays = parseInt(formData.get("targetDays"));
-    }
-    if (Object.keys(updates).length > 0) {
-      await prisma.inventoryItem.update({
-        where: { id: itemId },
-        data: updates
-      });
-    }
+    if (formData.has("targetDays")) updates.targetDays = parseInt(formData.get("targetDays"));
+    if (Object.keys(updates).length > 0) await prisma.inventoryItem.update({ where: { id: itemId }, data: updates });
     return { status: "updated" };
   }
   
   return null;
 };
 
+
+// --- LOADER ---
 export const loader = async ({ request }) => {
   const { session } = await authenticate.admin(request);
 
@@ -231,40 +221,63 @@ export const loader = async ({ request }) => {
 
 export default function ProfessionalAnalysis() {
   const { stats, items, aiReport, settings, shopHandle } = useLoaderData();
-  const navigation = useNavigation();
   const fetcher = useFetcher();
   const navigate = useNavigate(); 
-  
+  const navigation = useNavigation(); 
   const isSyncing = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "sync";
   const isLoading = navigation.state === "loading" && !isSyncing;
 
+
+  // --- REVIEW MODAL STATE ---
+  const [isReviewOpen, setIsReviewOpen] = useState(false);
+  const [reviewItems, setReviewItems] = useState([]);
+
+  // Filter/Sort State
   const [queryValue, setQueryValue] = useState("");
   const [selectedStatus, setSelectedStatus] = useState([]);
   const [sortSelected, setSortSelected] = useState(["runway desc"]);
 
-  useEffect(() => {
-    if (fetcher.state === "idle" && fetcher.data?.status === "po_generated") {
-      const { poMap } = fetcher.data; // e.g. { "Nike": "PO-1002" }
-      const itemsToPrint = JSON.parse(fetcher.formData.get("items"));
-      
-      // Inject the generated PO Number into the item objects for the PDF generator
-      const itemsWithPoNumbers = itemsToPrint.map(item => ({
-        ...item,
-        poNumber: poMap[item.vendor] || "PENDING"
-      }));
-
-      generatePO(itemsWithPoNumbers, { shopHandle });
-      shopify.toast.show("Purchase Orders Created & Synced!");
-    }
-  }, [fetcher.state, fetcher.data, shopHandle]);
-
-  const handleGeneratePO = (selectedItemsList) => {
-    // Send items to backend to generate Numbers & Sync to Shopify
-    const formData = new FormData();
-    formData.append("intent", "generate_po_numbers");
-    formData.append("items", JSON.stringify(selectedItemsList));
-    fetcher.submit(formData, { method: "POST" });
+  // --- HANDLERS ---
+  
+  // 1. Initial Click: Prepare data and Open Modal
+  const handleReviewClick = (itemsToReview) => {
+    // Map items to a clean structure for the modal
+    const cleanItems = itemsToReview.map(i => ({
+        id: i.id,
+        sku: i.sku,
+        title: i.title,
+        vendor: i.vendor,
+        cost: i.cost,
+        quantity: i.suggestedOrderQty // Default to suggested
+    }));
+    setReviewItems(cleanItems);
+    setIsReviewOpen(true);
   };
+
+  // 2. Handle Modal Edits
+  const handleReviewItemChange = (index, value) => {
+    const newItems = [...reviewItems];
+    newItems[index].quantity = parseInt(value) || 0;
+    setReviewItems(newItems);
+  };
+
+  // 3. Confirm & Create
+  const handleConfirmCreate = () => {
+    const formData = new FormData();
+    formData.append("intent", "create_po");
+    formData.append("items", JSON.stringify(reviewItems));
+    fetcher.submit(formData, { method: "POST" });
+    setIsReviewOpen(false);
+  };
+
+  // 4. Success Listener
+  useEffect(() => {
+    if (fetcher.state === "idle" && fetcher.data?.status === "po_created") {
+        shopify.toast.show("Purchase Orders Created");
+        // Redirect to the new PO Dashboard
+        navigate("/app/purchase_orders");
+    }
+  }, [fetcher.state, fetcher.data, navigate]);
 
   // --- CHANGE HERE: PDF Logic moved to utility file ---
 

@@ -40,18 +40,13 @@ model InventoryItem {
   cost        Float    @default(0.0)
   price       Float    @default(0.0)
   leadTime    Int      @default(14) 
-  
-  // Keep vendor as a simple string for reference
   vendor      String?
-  
   category    String?  
   reorderPoint Int     @default(5) 
   sales       DailySales[] 
   overrideVelocity Float?
   isPinned    Boolean  @default(false)
   targetDays  Int      @default(30) 
-
-  // --- RELATION: Link to Supplier via ID ---
   supplierId  String?
   supplier    Supplier? @relation(fields: [supplierId], references: [id])
 }
@@ -61,11 +56,23 @@ model DailySales {
   date          DateTime
   quantitySold  Int
   revenue       Float
-  
   inventoryItem InventoryItem @relation(fields: [variantId], references: [variantId])
   variantId     String
   
   @@index([variantId, date]) 
+}
+
+model MerchantSettings {
+  shop             String @id
+  openaiKey        String?
+  safetyStock      Int     @default(7) 
+  useAI            Boolean @default(false)
+  riskDaysCritical Int     @default(14)
+  riskDaysWarning  Int     @default(30)
+  lastSyncedAt     DateTime?
+  
+  // Only keep the counter
+  lastPoNumber     Int     @default(1000)
 }
 
 model Supplier {
@@ -79,7 +86,7 @@ model Supplier {
   @@unique([shop, name])
 }
 
-// --- NEW MODEL: INTERNAL PO HISTORY ---
+// --- UPDATED PO MODEL ---
 model PurchaseOrder {
   id          String   @id @default(uuid())
   shop        String
@@ -87,20 +94,8 @@ model PurchaseOrder {
   createdAt   DateTime @default(now())
   vendor      String
   totalCost   Float
-  status      String   @default("OPEN") // OPEN, SENT, RECEIVED
-  shopifyDraftId String? // ID if synced to Shopify
-}
-
-model Supplier {
-  id          String   @id @default(uuid())
-  shop        String
-  name        String
-  email       String?
-  contactName String?
-  leadTime    Int      @default(14)
+  status      String   @default("OPEN") // OPEN, SENT, RECEIVED, CLOSED
   
-  items       InventoryItem[]
-
-  // Ensures a supplier name is unique per shop
-  @@unique([shop, name])
+  // Stores the snapshot: [{ title, sku, quantity, cost, ... }]
+  items       Json     
 }

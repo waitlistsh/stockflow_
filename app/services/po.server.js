@@ -2,10 +2,10 @@
 import prisma from "../db.server";
 
 /**
- * Creates Purchase Orders for the given items.
- * Groups by Vendor -> Assigns Next PO Number -> Syncs to Shopify (optional)
+ * Creates Internal Purchase Orders.
+ * No interaction with Shopify Draft Orders.
  */
-export async function createPurchaseOrders(admin, shop, items) {
+export async function createPurchaseOrders(shop, items) {
   // 1. Group items by Vendor
   const groupedItems = items.reduce((acc, item) => {
     const vendor = item.vendor || "Unknown Vendor";
@@ -14,12 +14,11 @@ export async function createPurchaseOrders(admin, shop, items) {
     return acc;
   }, {});
 
-  const results = {}; // Map: "Vendor Name" -> "PO-1001"
+  const results = {};
 
-  // 2. Fetch current settings to get start number
+  // 2. Fetch/Init Settings
   let settings = await prisma.merchantSettings.findUnique({ where: { shop } });
   if (!settings) {
-    // Default fallback
     settings = await prisma.merchantSettings.create({
       data: { shop, lastPoNumber: 1000 }
     });
@@ -27,17 +26,28 @@ export async function createPurchaseOrders(admin, shop, items) {
 
   let currentPoNum = settings.lastPoNumber;
 
-  // 3. Iterate Vendors and Create POs
+  // 3. Create POs
   for (const [vendor, vendorItems] of Object.entries(groupedItems)) {
-    // Only process if there's actually a suggested order qty > 0
-    const itemsToOrder = vendorItems.filter(i => i.suggestedOrderQty > 0);
+    const itemsToOrder = vendorItems.filter(i => (i.quantity || i.suggestedOrderQty) > 0);
     if (itemsToOrder.length === 0) continue;
 
-    currentPoNum++; // Increment for this vendor
-    const poString = `PO-${currentPoNum}`;
-    const totalCost = itemsToOrder.reduce((sum, i) => sum + (i.cost * i.suggestedOrderQty), 0);
+    currentPoNum++; 
+    
+    // Calculate total based on what data structure is passed
+    const totalCost = itemsToOrder.reduce((sum, i) => {
+        const qty = i.quantity !== undefined ? i.quantity : i.suggestedOrderQty;
+        return sum + (i.cost * qty);
+    }, 0);
 
-    // A. Create Internal Record
+    // Sanitize items for storage (snapshot)
+    const snapshotItems = itemsToOrder.map(i => ({
+        id: i.id,
+        sku: i.sku,
+        title: i.title,
+        cost: i.cost,
+        quantity: i.quantity !== undefined ? i.quantity : i.suggestedOrderQty
+    }));
+
     await prisma.purchaseOrder.create({
       data: {
         shop,
@@ -45,19 +55,14 @@ export async function createPurchaseOrders(admin, shop, items) {
         vendor,
         totalCost,
         status: "OPEN",
-        items: itemsToOrder // Storing JSON snapshot
+        items: snapshotItems // Save valid JSON
       }
     });
 
-    results[vendor] = poString;
-
-    // B. Sync to Shopify (Draft Order) if enabled
-    if (settings.syncDraftOrders) {
-      await createDraftOrderInShopify(admin, vendor, poString, itemsToOrder);
-    }
+    results[vendor] = `PO-${currentPoNum}`;
   }
 
-  // 4. Update the settings with the new highest number
+  // 4. Increment Counter
   await prisma.merchantSettings.update({
     where: { shop },
     data: { lastPoNumber: currentPoNum }
@@ -66,43 +71,18 @@ export async function createPurchaseOrders(admin, shop, items) {
   return results;
 }
 
-async function createDraftOrderInShopify(admin, vendor, poNumber, items) {
-  const lineItems = items.map(item => ({
-    title: item.title,
-    originalUnitPrice: item.cost, // PO uses Cost, not Price
-    quantity: item.suggestedOrderQty,
-    sku: item.sku
-  }));
-
-  const response = await admin.graphql(
-    `#graphql
-      mutation draftOrderCreate($input: DraftOrderInput!) {
-        draftOrderCreate(input: $input) {
-          draftOrder {
-            id
-            name
-          }
-          userErrors {
-            field
-            message
-          }
+/**
+ * Updates an existing PO (e.g. from the PO Dashboard).
+ */
+export async function updatePurchaseOrder(id, items) {
+    // items should be [{ title, sku, cost, quantity }]
+    const totalCost = items.reduce((sum, i) => sum + (i.cost * i.quantity), 0);
+    
+    return await prisma.purchaseOrder.update({
+        where: { id },
+        data: {
+            items: items, // Update the JSON snapshot
+            totalCost: totalCost
         }
-      }
-    `,
-    {
-      variables: {
-        input: {
-          note: `Stockflow Generated Purchase Order: ${poNumber}`,
-          tags: ["Purchase Order", "Stockflow", vendor],
-          lineItems: lineItems,
-          customAttributes: [{ key: "PO_Number", value: poNumber }]
-        }
-      }
-    }
-  );
-
-  const data = await response.json();
-  if (data.data?.draftOrderCreate?.userErrors?.length > 0) {
-    console.error("Failed to sync Draft Order:", data.data.draftOrderCreate.userErrors);
-  }
+    });
 }
