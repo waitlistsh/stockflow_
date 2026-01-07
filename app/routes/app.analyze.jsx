@@ -1,6 +1,7 @@
 // app/routes/app.analyze.jsx
 import { useState, useCallback, useEffect } from "react";
 import { useLoaderData, useNavigation, useFetcher, useNavigate, useLocation } from "react-router";
+
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { syncProducts, syncOrders } from "../services/inventory.server"; 
@@ -14,9 +15,8 @@ import {
 import { RefreshIcon, SettingsIcon, PinIcon, PageDownIcon, DiscountIcon } from "@shopify/polaris-icons"; 
 import { LineChart, Line, ResponsiveContainer } from 'recharts';
 
-// --- HELPER COMPONENTS & FUNCTIONS ---
-
-function EditableCell({ value: initialValue, onSave }) {
+// --- HELPER COMPONENT: STABLE EDITABLE CELL ---
+function EditableCell({ value: initialValue, onSave, prefix = "", type = "text" }) {
   const [value, setValue] = useState(initialValue);
 
   useEffect(() => {
@@ -32,15 +32,16 @@ function EditableCell({ value: initialValue, onSave }) {
   }, [value, initialValue, onSave]);
 
   return (
-    <div style={{ width: '80px' }} onClick={(e) => e.stopPropagation()}>
+    <div style={{ minWidth: '80px' }} onClick={(e) => e.stopPropagation()}>
       <TextField
-        type="number"
+        type={type} 
         value={String(value)}
         onChange={handleChange}
         onBlur={handleBlur}
         autoComplete="off"
-        label="Edit Target"
+        label="Edit"
         labelHidden
+        prefix={prefix}
       />
     </div>
   );
@@ -222,7 +223,7 @@ export default function ProfessionalAnalysis() {
   const fetcher = useFetcher();
   const navigate = useNavigate(); 
   const navigation = useNavigation(); 
-  const location = useLocation(); // <--- FIXED: Initialized here
+  const location = useLocation(); 
 
   const isSyncing = fetcher.state === "submitting" && fetcher.formData?.get("intent") === "sync";
   const isLoading = navigation.state === "loading" && !isSyncing;
@@ -236,32 +237,42 @@ export default function ProfessionalAnalysis() {
 
   // --- HANDLERS ---
 
-  // 1. Initial Click: Prepare data and Open Modal
+  // 1. Initial Click: Prepare data for editing (as strings/numbers)
   const handleReviewClick = (itemsToReview) => {
     const cleanItems = itemsToReview.map(i => ({
         id: i.id,
         sku: i.sku,
         title: i.title,
         vendor: i.vendor,
-        cost: i.cost,
+        cost: i.cost || 0,
         quantity: i.suggestedOrderQty > 0 ? i.suggestedOrderQty : 0
     }));
     setReviewItems(cleanItems);
     setIsReviewOpen(true);
   };
 
-  // 2. Handle Modal Edits
-  const handleReviewItemChange = (index, value) => {
-    const newItems = [...reviewItems];
-    newItems[index].quantity = parseInt(value) || 0;
-    setReviewItems(newItems);
+  // 2. Handle Modal Edits (Updates Local State on Blur)
+  const handleReviewItemChange = (index, field, value) => {
+    setReviewItems(prev => {
+      const newItems = [...prev];
+      newItems[index] = { ...newItems[index], [field]: value };
+      return newItems;
+    });
   };
 
-  // 3. Confirm & Create
+  // 3. Confirm & Create: Converts text inputs back to valid numbers
   const handleConfirmCreate = () => {
     const formData = new FormData();
     formData.append("intent", "create_po");
-    formData.append("items", JSON.stringify(reviewItems));
+    
+    // Parse strings to numbers securely before sending
+    const submissionItems = reviewItems.map(i => ({
+        ...i,
+        cost: parseFloat(i.cost) || 0,
+        quantity: parseInt(i.quantity) || 0
+    }));
+
+    formData.append("items", JSON.stringify(submissionItems));
     fetcher.submit(formData, { method: "POST" });
     setIsReviewOpen(false);
   };
@@ -276,7 +287,7 @@ export default function ProfessionalAnalysis() {
     }
   }, [fetcher.state, fetcher.data, navigate, location.search]);
 
-  // Update item handler
+  // Update item handler (for Target Days in main table)
   const handleUpdateItem = (id, field, value) => {
     const formData = new FormData();
     formData.append("intent", "update_item");
@@ -298,12 +309,13 @@ export default function ProfessionalAnalysis() {
   const onSort = useCallback((headingIndex, direction) => {
     const mapping = {
       0: 'title',
-      1: 'cost',       
-      2: 'targetDays', 
-      3: 'inventory',
-      5: 'velocity',
-      6: 'runway',
-      7: 'suggestedOrderQty'
+      1: 'price',
+      2: 'cost',       
+      3: 'targetDays', 
+      4: 'inventory',
+      6: 'velocity',
+      7: 'runway',
+      8: 'suggestedOrderQty'
     };
     const key = mapping[headingIndex];
     if (key) {
@@ -420,10 +432,15 @@ export default function ProfessionalAnalysis() {
         </div>
       </IndexTable.Cell>
       
+      {/* Price Column */}
+      <IndexTable.Cell><Text variant="bodyMd">${item.price?.toFixed(2) || '0.00'}</Text></IndexTable.Cell>
+
+      {/* Cost Column */}
       <IndexTable.Cell><Text variant="bodyMd">${item.cost?.toFixed(2) || '0.00'}</Text></IndexTable.Cell>
 
       <IndexTable.Cell>
-         <EditableCell value={item.targetDays} onSave={(val) => handleUpdateItem(item.id, 'targetDays', val)} />
+         {/* Target Days: Uses number input for DB update */}
+         <EditableCell type="number" value={item.targetDays} onSave={(val) => handleUpdateItem(item.id, 'targetDays', val)} />
       </IndexTable.Cell>
 
       <IndexTable.Cell>{item.inventory}</IndexTable.Cell>
@@ -582,11 +599,12 @@ export default function ProfessionalAnalysis() {
                 selectedItemsCount={allResourcesSelected ? 'All' : selectedResources.length}
                 onSelectionChange={handleSelectionChange}
                 promotedBulkActions={promotedBulkActions}
-                sortable={[true, true, false, true, true, true, true, true]} 
+                sortable={[true, true, true, false, true, true, true, true, true]} 
                 sortSelected={sortSelected}
                 onSort={onSort}
                 headings={[
                   { title: 'Product' },
+                  { title: 'Price' }, // NEW Header
                   { title: 'Cost' },       
                   { title: 'Target Days' },
                   { title: 'Stock' },
@@ -624,7 +642,7 @@ export default function ProfessionalAnalysis() {
         >
           <Modal.Section>
             <Text as="p" variant="bodyMd" tone="subdued">
-               Review quantities before generating internal Purchase Orders.
+               Review quantities and costs before generating internal Purchase Orders.
             </Text>
             <Box paddingBlockStart="400">
             <IndexTable
@@ -642,13 +660,21 @@ export default function ProfessionalAnalysis() {
                 <IndexTable.Row key={index} id={item.id} position={index}>
                   <IndexTable.Cell>{item.vendor}</IndexTable.Cell>
                   <IndexTable.Cell>{item.title}</IndexTable.Cell>
-                  <IndexTable.Cell>${item.cost}</IndexTable.Cell>
+                  
+                  {/* EDITABLE COST: using EditableCell with text type for stability */}
                   <IndexTable.Cell>
-                      <TextField 
-                        type="number" 
-                        value={String(item.quantity)} 
-                        onChange={(val) => handleReviewItemChange(index, val)}
-                        autoComplete="off"
+                      <EditableCell 
+                        value={item.cost} 
+                        prefix="$" 
+                        onSave={(val) => handleReviewItemChange(index, 'cost', val)}
+                      />
+                  </IndexTable.Cell>
+
+                  {/* EDITABLE QUANTITY */}
+                  <IndexTable.Cell>
+                      <EditableCell 
+                        value={item.quantity} 
+                        onSave={(val) => handleReviewItemChange(index, 'quantity', val)}
                       />
                   </IndexTable.Cell>
                 </IndexTable.Row>
