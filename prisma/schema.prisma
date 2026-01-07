@@ -38,6 +38,7 @@ model InventoryItem {
   title       String
   inventory   Int      @default(0) 
   cost        Float    @default(0.0)
+  vatRate     Float    @default(0.0)
   price       Float    @default(0.0)
   leadTime    Int      @default(14) 
   vendor      String?
@@ -82,7 +83,8 @@ model Supplier {
   email        String?
   contactName  String?
   address      String?
-  paymentTerms String?   // e.g. "Net 30", "Due on Receipt"
+  paymentTerms String?
+  vatRate      Float    @default(0.0) // <--- NEW: Master VAT
   leadTime     Int      @default(14)
   items        InventoryItem[]
   @@unique([shop, name])
@@ -96,7 +98,8 @@ model PurchaseOrder {
   vendor      String
   vendorAddress String?
   paymentTerms  String?
-  totalCost   Float
+  totalCost   Float    // This will be Net Cost
+  totalTax    Float    @default(0.0) // <--- NEW: Total Tax Amount
   status      String   @default("OPEN") 
   items       Json     
 }

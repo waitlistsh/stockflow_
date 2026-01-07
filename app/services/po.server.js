@@ -29,35 +29,45 @@ export async function createPurchaseOrders(shop, items) {
 
     currentPoNum++; 
     
-    // --- NEW: Fetch Supplier Details ---
+    // Fetch Supplier Details
     const supplier = await prisma.supplier.findFirst({
       where: { shop, name: vendor }
     });
-    // -----------------------------------
 
-    const totalCost = itemsToOrder.reduce((sum, i) => {
+    // --- CALCULATE COSTS & TAX ---
+    let totalNetCost = 0;
+    let totalTax = 0;
+
+    const snapshotItems = itemsToOrder.map(i => {
         const qty = i.quantity !== undefined ? i.quantity : i.suggestedOrderQty;
-        return sum + (i.cost * qty);
-    }, 0);
+        const cost = i.cost || 0;
+        const vatRate = i.vatRate || 0; // Use product VAT
+        
+        const lineCost = cost * qty;
+        const lineTax = lineCost * (vatRate / 100);
 
-    const snapshotItems = itemsToOrder.map(i => ({
-        id: i.id,
-        sku: i.sku,
-        title: i.title,
-        cost: i.cost,
-        quantity: i.quantity !== undefined ? i.quantity : i.suggestedOrderQty
-    }));
+        totalNetCost += lineCost;
+        totalTax += lineTax;
+
+        return {
+            id: i.id,
+            sku: i.sku,
+            title: i.title,
+            cost: cost,
+            vatRate: vatRate, // Save VAT rate in snapshot
+            quantity: qty
+        };
+    });
 
     await prisma.purchaseOrder.create({
       data: {
         shop,
         poNumber: currentPoNum,
         vendor,
-        // --- NEW: Save Snapshot ---
         vendorAddress: supplier?.address,
         paymentTerms: supplier?.paymentTerms,
-        // --------------------------
-        totalCost,
+        totalCost: totalNetCost, // Net Cost
+        totalTax: totalTax,      // Tax Amount
         status: "OPEN",
         items: snapshotItems 
       }
@@ -76,13 +86,30 @@ export async function createPurchaseOrders(shop, items) {
 }
 
 export async function updatePurchaseOrder(id, items) {
-    const totalCost = items.reduce((sum, i) => sum + (i.cost * i.quantity), 0);
+    // Recalculate Totals on Update
+    let totalNetCost = 0;
+    let totalTax = 0;
+
+    const updatedItems = items.map(i => {
+        const cost = i.cost || 0;
+        const qty = i.quantity || 0;
+        const vatRate = i.vatRate || 0;
+        
+        totalNetCost += (cost * qty);
+        totalTax += (cost * qty) * (vatRate / 100);
+
+        return { ...i, cost, quantity: qty, vatRate };
+    });
+
     return await prisma.purchaseOrder.update({
         where: { id },
-        data: { items: items, totalCost: totalCost }
+        data: { 
+            items: updatedItems, 
+            totalCost: totalNetCost,
+            totalTax: totalTax
+        }
     });
 }
-
 
 export async function receivePurchaseOrder(admin, shop, poId) {
   // 1. Fetch the PO to get the items

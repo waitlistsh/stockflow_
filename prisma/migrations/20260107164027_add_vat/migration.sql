@@ -1,0 +1,8 @@
+-- AlterTable
+ALTER TABLE "InventoryItem" ADD COLUMN     "vatRate" DOUBLE PRECISION NOT NULL DEFAULT 0.0;
+
+-- AlterTable
+ALTER TABLE "PurchaseOrder" ADD COLUMN     "totalTax" DOUBLE PRECISION NOT NULL DEFAULT 0.0;
+
+-- AlterTable
+ALTER TABLE "Supplier" ADD COLUMN     "vatRate" DOUBLE PRECISION NOT NULL DEFAULT 0.0;

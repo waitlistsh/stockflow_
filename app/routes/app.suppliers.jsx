@@ -1,13 +1,13 @@
 // app/routes/app.suppliers.jsx
 import { useEffect } from "react";
-import { useLoaderData, useNavigate, useFetcher, useLocation } from "react-router";
+import { useLoaderData, useNavigate, useFetcher, useLocation, Link } from "react-router";
 import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { syncSuppliers } from "../services/inventory.server"; 
 import {
-  Page, Layout, Card, IndexTable, Text, Button, Banner
+  Page, Layout, Card, IndexTable, Button, Banner, Text, Tooltip
 } from "@shopify/polaris";
-import { PlusIcon, SettingsIcon, ImportIcon } from "@shopify/polaris-icons"; 
+import { PlusIcon, SettingsIcon, ImportIcon, EditIcon } from "@shopify/polaris-icons"; 
 
 export const loader = async ({ request }) => {
   await authenticate.admin(request);
@@ -62,20 +62,50 @@ export default function Suppliers() {
     }
   }, [fetcher.data, navigate, location.search]);
 
+  // Reliable navigation helper
+  const goToSupplier = (id) => {
+    const target = `/app/supplier/${id}${location.search}`;
+    navigate(target);
+  };
+
   const rowMarkup = suppliers.map((supplier, index) => (
     <IndexTable.Row 
       id={supplier.id} 
       key={supplier.id} 
       position={index}
-      onClick={() => navigate(`/app/supplier/${supplier.id}${location.search}`)} 
+      // Primary row click handler
+      onClick={() => goToSupplier(supplier.id)}
     >
       <IndexTable.Cell>
-        <Text fontWeight="bold" as="span">{supplier.name}</Text>
+        {/* Explicit Link - stops propagation so it doesn't conflict with row click */}
+        <div onClick={(e) => e.stopPropagation()}>
+          <Link 
+            to={`/app/supplier/${supplier.id}${location.search}`}
+            style={{ fontWeight: 'bold', textDecoration: 'none', color: '#202223' }}
+          >
+            <Text fontWeight="bold" as="span">{supplier.name}</Text>
+          </Link>
+        </div>
       </IndexTable.Cell>
+      
       <IndexTable.Cell>{supplier.email || "—"}</IndexTable.Cell>
       <IndexTable.Cell>{supplier.contactName || "—"}</IndexTable.Cell>
       <IndexTable.Cell>{supplier.leadTime} Days</IndexTable.Cell>
       <IndexTable.Cell>{supplier._count.items} SKUs</IndexTable.Cell>
+
+      {/* Explicit Action Column */}
+      <IndexTable.Cell>
+         <div onClick={(e) => e.stopPropagation()}>
+            <Tooltip content="Edit Supplier Details">
+                <Button 
+                    icon={EditIcon} 
+                    variant="plain" 
+                    onClick={() => goToSupplier(supplier.id)}
+                    accessibilityLabel="Edit"
+                />
+            </Tooltip>
+         </div>
+      </IndexTable.Cell>
     </IndexTable.Row>
   ));
 
@@ -139,6 +169,7 @@ export default function Suppliers() {
                 { title: 'Contact' },
                 { title: 'Lead Time' },
                 { title: 'Linked Products' },
+                { title: '' } // Action Column
               ]}
               selectable={false}
             >
