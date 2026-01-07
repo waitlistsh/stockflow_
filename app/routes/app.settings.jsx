@@ -1,4 +1,3 @@
-// app/routes/app.settings.jsx
 import { useState } from "react";
 import { Form, useLoaderData, useActionData, useNavigation, useNavigate } from "react-router"; 
 import { 
@@ -8,14 +7,16 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 
 export const action = async ({ request }) => {
-  console.log("--- ACTION STARTED ---"); // Debug 1
+  console.log("------------------------------------------");
+  console.log("🚀 ACTION STARTED - SETTINGS PAGE");
+  console.log("------------------------------------------");
   
   try {
     const { session } = await authenticate.admin(request);
-    console.log("Session found:", session.shop); // Debug 2
+    console.log("✅ Session found for shop:", session.shop);
 
     const formData = await request.formData();
-    console.log("Form Data received"); // Debug 3
+    console.log("✅ Form Data received");
     
     const openaiKey = formData.get("openaiKey");
     const riskDaysCritical = parseInt(formData.get("riskDaysCritical") || "14");
@@ -30,21 +31,20 @@ export const action = async ({ request }) => {
         lastPoNumber, 
         syncDraftOrders 
     };
-    console.log("Attempting to save:", dataToSave); // Debug 4
+    console.log("💾 Attempting to save to DB:", JSON.stringify(dataToSave, null, 2));
 
-    // This is where it likely crashes
     const result = await prisma.merchantSettings.upsert({
       where: { shop: session.shop },
       update: dataToSave,
       create: { shop: session.shop, ...dataToSave }
     });
 
-    console.log("--- SAVE SUCCESSFUL ---"); // Debug 5
+    console.log("🎉 SAVE SUCCESSFUL");
     return { status: "saved" };
 
   } catch (error) {
-    console.error("!!! SAVE FAILED !!!");
-    console.error(error); // This will print the REAL error
+    console.error("❌ SAVE FAILED WITH ERROR:");
+    console.error(error); 
     return { status: "error", error: error.message };
   }
 };
@@ -64,7 +64,6 @@ export const loader = async ({ request }) => {
 
 export default function Settings() {
   const { openaiKey, riskDaysCritical, riskDaysWarning, lastPoNumber, syncDraftOrders } = useLoaderData();
-  const actionData = useActionData();
   const navigation = useNavigation();
   const navigate = useNavigate();
   
@@ -81,7 +80,7 @@ export default function Settings() {
   return (
     <Page 
       title="App Configuration" 
-      backAction={{ content: "Dashboard", onAction: () => navigate("/app" + window.location.search) }}
+      backAction={{ content: "Dashboard", onAction: () => navigate("/app") }}
     >
       <Layout>
         <Layout.AnnotatedSection
